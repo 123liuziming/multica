@@ -250,12 +250,24 @@ func main() {
 
 	queries := db.New(pool)
 	hub.SetAuthorizer(newScopeAuthorizer(queries))
+
+	dingClient := dingtalk.NewClient(dingtalk.Config{
+		AppKey:    os.Getenv("DINGTALK_APP_KEY"),
+		AppSecret: os.Getenv("DINGTALK_APP_SECRET"),
+		RobotCode: os.Getenv("DINGTALK_ROBOT_CODE"),
+	})
+	if dingClient.Enabled() {
+		slog.Info("dingtalk: inbox push enabled")
+	} else {
+		slog.Info("dingtalk: inbox push disabled (DINGTALK_APP_KEY/SECRET/ROBOT_CODE not all set)")
+	}
+
 	// Order matters: subscriber listeners must register BEFORE notification listeners.
 	// The notification listener queries the subscriber table to determine recipients,
 	// so subscribers must be written first within the same synchronous event dispatch.
 	registerSubscriberListeners(bus, queries)
 	registerActivityListeners(bus, queries)
-	registerNotificationListeners(bus, queries)
+	registerNotificationListeners(bus, queries, dingClient)
 
 	metricsConfig := obsmetrics.ConfigFromEnv()
 	var metricsServer *http.Server
@@ -283,17 +295,6 @@ func main() {
 	// alongside the sweeper, and Stop is called explicitly during graceful
 	// shutdown so any pending bumps are flushed before we exit.
 	heartbeatScheduler := handler.NewBatchedHeartbeatScheduler(queries, handler.DefaultHeartbeatBatchInterval)
-
-	dingClient := dingtalk.NewClient(dingtalk.Config{
-		AppKey:    os.Getenv("DINGTALK_APP_KEY"),
-		AppSecret: os.Getenv("DINGTALK_APP_SECRET"),
-		RobotCode: os.Getenv("DINGTALK_ROBOT_CODE"),
-	})
-	if dingClient.Enabled() {
-		slog.Info("dingtalk: inbox push enabled")
-	} else {
-		slog.Info("dingtalk: inbox push disabled (DINGTALK_APP_KEY/SECRET/ROBOT_CODE not all set)")
-	}
 
 	r := NewRouterWithOptions(pool, hub, bus, analyticsClient, storeRedis, RouterOptions{
 		HTTPMetrics:        httpMetrics,

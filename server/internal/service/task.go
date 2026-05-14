@@ -2018,7 +2018,7 @@ func (s *TaskService) notifyQuickCreateCompleted(ctx context.Context, task db.Ag
 		return
 	}
 	s.publishQuickCreateInbox(item, qc.WorkspaceID, util.UUIDToString(task.AgentID), issue.Status)
-	s.pushInboxToDingtalk(ctx, item)
+	dingtalk.PushInbox(ctx, s.Dingtalk, s.Queries, item)
 }
 
 // notifyQuickCreateFailed writes a failure inbox notification carrying the
@@ -2061,7 +2061,7 @@ func (s *TaskService) notifyQuickCreateFailed(ctx context.Context, task db.Agent
 		return
 	}
 	s.publishQuickCreateInbox(item, qc.WorkspaceID, util.UUIDToString(task.AgentID), "")
-	s.pushInboxToDingtalk(ctx, item)
+	dingtalk.PushInbox(ctx, s.Dingtalk, s.Queries, item)
 }
 
 // publishQuickCreateInbox emits the WS event so the requester's inbox list
@@ -2093,44 +2093,6 @@ func (s *TaskService) publishQuickCreateInbox(item db.InboxItem, workspaceID, ag
 		ActorID:     agentID,
 		Payload:     map[string]any{"item": resp},
 	})
-}
-
-// pushInboxToDingtalk mirrors an inbox item into the recipient's 1:1
-// DingTalk chat. Best-effort: failures (missing config, non-Alibaba email,
-// API error) are logged and never block the inbox flow. The actual HTTP
-// call runs in a goroutine so the caller's request context — which may be
-// cancelled the moment the task service replies — does not abort the
-// outbound DingTalk request.
-func (s *TaskService) pushInboxToDingtalk(ctx context.Context, item db.InboxItem) {
-	if !s.Dingtalk.Enabled() {
-		return
-	}
-	user, err := s.Queries.GetUser(ctx, item.RecipientID)
-	if err != nil {
-		slog.Warn("dingtalk: lookup recipient failed",
-			"user_id", util.UUIDToString(item.RecipientID),
-			"inbox_type", item.Type,
-			"error", err)
-		return
-	}
-	userID, ok := dingtalk.UserIDFromAlibabaEmail(user.Email)
-	if !ok {
-		slog.Debug("dingtalk: skipping non-alibaba email",
-			"email_domain_ok", false,
-			"inbox_type", item.Type)
-		return
-	}
-	markdown := dingtalk.BuildInboxMarkdown(item)
-	go func(client *dingtalk.Client, dingUserID, title, md string, inboxType string) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := client.BatchSendOTOMarkdown(ctx, []string{dingUserID}, title, md); err != nil {
-			slog.Warn("dingtalk: push inbox failed",
-				"ding_user_id", dingUserID,
-				"inbox_type", inboxType,
-				"error", err)
-		}
-	}(s.Dingtalk, userID, item.Title, markdown, item.Type)
 }
 
 // agentToMap builds a simple map for broadcasting agent status updates.
