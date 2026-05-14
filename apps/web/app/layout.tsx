@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
-import { Inter, Geist_Mono, Source_Serif_4 } from "next/font/google";
+import type { CSSProperties } from "react";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@multica/ui/components/ui/sonner";
 import { cn } from "@multica/ui/lib/utils";
@@ -23,45 +23,13 @@ import "./globals.css";
 // the tail with Hiragino Kaku Gothic ProN / Yu Gothic / Apple SD Gothic Neo / Malgun Gothic.
 // Per-character fallback: Latin chars render with Inter, Chinese chars with
 // PingFang SC (macOS) / Microsoft YaHei (Windows) / Noto Sans CJK SC (Linux).
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-sans",
-  fallback: [
-    "-apple-system",
-    "BlinkMacSystemFont",
-    "Segoe UI",
-    "PingFang SC",
-    "Microsoft YaHei",
-    "Noto Sans CJK SC",
-    "sans-serif",
-  ],
-});
-// Mono font has no explicit CJK fallback: CJK chars in code blocks are inherently
-// non-aligned with a mono grid (Chinese is proportional), so listing CJK fonts
-// here would falsely signal alignment guarantees. Browser default fallback handles
-// the rare mixed case correctly.
-const geistMono = Geist_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
-  fallback: ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"],
-});
-// Editorial serif used for onboarding headlines. Italic support for h1 em
-// accents (e.g. "...on one shared board."). Only loaded on routes that
-// render the font; layout-shift-prevention handled by next/font's synthetic
-// fallback metrics, same as Inter.
-const sourceSerif = Source_Serif_4({
-  subsets: ["latin"],
-  style: ["normal", "italic"],
-  variable: "--font-serif",
-  fallback: [
-    "ui-serif",
-    "Iowan Old Style",
-    "Apple Garamond",
-    "Baskerville",
-    "Times New Roman",
-    "serif",
-  ],
-});
+const fontVariables = {
+  "--font-sans":
+    'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif',
+  "--font-mono": '"Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+  "--font-serif":
+    '"Source Serif 4", ui-serif, "Iowan Old Style", "Apple Garamond", Baskerville, "Times New Roman", serif',
+} as CSSProperties;
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -132,7 +100,8 @@ export default async function RootLayout({
     <html
       lang={HTML_LANG[locale]}
       suppressHydrationWarning
-      className={cn("antialiased font-sans h-full", inter.variable, geistMono.variable, sourceSerif.variable)}
+      className={cn("antialiased font-sans h-full")}
+      style={fontVariables}
     >
       <body className="h-full overflow-hidden">
         <ThemeProvider>

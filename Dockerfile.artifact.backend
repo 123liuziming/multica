@@ -1,0 +1,14 @@
+FROM acos-demo-registry.cn-hangzhou.cr.aliyuncs.com/private-mesh/multica-backend:latest
+
+WORKDIR /app
+
+COPY .deploy-artifacts/backend/server ./server
+COPY .deploy-artifacts/backend/migrate ./migrate
+COPY .deploy-artifacts/backend/migrations ./migrations
+COPY .deploy-artifacts/backend/entrypoint.sh ./entrypoint.sh
+
+RUN chmod +x ./server ./migrate ./entrypoint.sh
+
+EXPOSE 8080
+
+ENTRYPOINT ["./entrypoint.sh"]
