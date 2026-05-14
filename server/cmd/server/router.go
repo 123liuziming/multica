@@ -26,6 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dingtalk"
 )
 
 var defaultOrigins = []string{
@@ -77,6 +78,10 @@ type RouterOptions struct {
 	// BatchedHeartbeatScheduler here so the caller can also drive Run/Stop;
 	// tests leave this nil and get the legacy synchronous behavior.
 	HeartbeatScheduler handler.HeartbeatScheduler
+	// Dingtalk is optional. When non-nil and Enabled, the Handler's
+	// TaskService mirrors inbox notifications into the recipient's 1:1
+	// DingTalk chat.
+	Dingtalk *dingtalk.Client
 }
 
 func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb *redis.Client, opts RouterOptions) chi.Router {
@@ -111,6 +116,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	if opts.DaemonWakeup != nil {
 		h.TaskService.Wakeup = opts.DaemonWakeup
+	}
+	if opts.Dingtalk.Enabled() {
+		h.TaskService.Dingtalk = opts.Dingtalk
 	}
 	if rdb != nil {
 		h.UpdateStore = handler.NewRedisUpdateStore(rdb)

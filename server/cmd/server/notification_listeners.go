@@ -10,8 +10,15 @@ import (
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dingtalk"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
+
+// dingClient is the package-level DingTalk client used by the notification
+// helpers in this file. It is set once by registerNotificationListeners; if
+// DingTalk is not configured it stays nil and PushInbox no-ops (Enabled()
+// is false on a nil receiver).
+var dingClient *dingtalk.Client
 
 // mention represents a parsed @mention from markdown content (local alias).
 type mention struct {
@@ -357,6 +364,7 @@ func notifyIssueSubscribers(
 			ActorID:     e.ActorID,
 			Payload:     map[string]any{"item": resp},
 		})
+		dingtalk.PushInbox(ctx, dingClient, queries, item)
 	}
 
 	return notified
@@ -421,6 +429,7 @@ func notifyDirect(
 		ActorID:     e.ActorID,
 		Payload:     map[string]any{"item": resp},
 	})
+	dingtalk.PushInbox(ctx, dingClient, queries, item)
 }
 
 // notifyMentionedMembers creates inbox items for each @mentioned member,
@@ -530,6 +539,7 @@ func notifyMentionedMembers(
 			ActorID:     e.ActorID,
 			Payload:     map[string]any{"item": resp},
 		})
+		dingtalk.PushInbox(context.Background(), dingClient, queries, item)
 	}
 }
 
@@ -540,7 +550,8 @@ func notifyMentionedMembers(
 // NOTE: uses context.Background() because the event bus dispatches synchronously
 // within the HTTP request goroutine. Adding per-handler timeouts is a bus-level
 // concern — see events.Bus for future improvements.
-func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
+func registerNotificationListeners(bus *events.Bus, queries *db.Queries, ding *dingtalk.Client) {
+	dingClient = ding
 	ctx := context.Background()
 
 	// issue:created — Direct notification to assignee if assignee != actor

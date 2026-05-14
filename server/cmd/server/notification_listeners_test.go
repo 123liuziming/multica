@@ -72,7 +72,7 @@ func newNotificationBus(t *testing.T, queries *db.Queries) *events.Bus {
 	t.Helper()
 	bus := events.New()
 	registerSubscriberListeners(bus, queries)
-	registerNotificationListeners(bus, queries)
+	registerNotificationListeners(bus, queries, nil)
 	return bus
 }
 

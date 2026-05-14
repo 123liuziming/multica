@@ -20,6 +20,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dingtalk"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -249,12 +250,24 @@ func main() {
 
 	queries := db.New(pool)
 	hub.SetAuthorizer(newScopeAuthorizer(queries))
+
+	dingClient := dingtalk.NewClient(dingtalk.Config{
+		AppKey:    os.Getenv("DINGTALK_APP_KEY"),
+		AppSecret: os.Getenv("DINGTALK_APP_SECRET"),
+		RobotCode: os.Getenv("DINGTALK_ROBOT_CODE"),
+	})
+	if dingClient.Enabled() {
+		slog.Info("dingtalk: inbox push enabled")
+	} else {
+		slog.Info("dingtalk: inbox push disabled (DINGTALK_APP_KEY/SECRET/ROBOT_CODE not all set)")
+	}
+
 	// Order matters: subscriber listeners must register BEFORE notification listeners.
 	// The notification listener queries the subscriber table to determine recipients,
 	// so subscribers must be written first within the same synchronous event dispatch.
 	registerSubscriberListeners(bus, queries)
 	registerActivityListeners(bus, queries)
-	registerNotificationListeners(bus, queries)
+	registerNotificationListeners(bus, queries, dingClient)
 
 	metricsConfig := obsmetrics.ConfigFromEnv()
 	var metricsServer *http.Server
@@ -288,6 +301,7 @@ func main() {
 		DaemonHub:          daemonHub,
 		DaemonWakeup:       daemonWakeup,
 		HeartbeatScheduler: heartbeatScheduler,
+		Dingtalk:           dingClient,
 	})
 
 	srv := &http.Server{
@@ -300,6 +314,9 @@ func main() {
 	autopilotCtx, autopilotCancel := context.WithCancel(context.Background())
 	taskSvc := service.NewTaskService(queries, pool, hub, bus, daemonWakeup)
 	taskSvc.Analytics = analyticsClient
+	if dingClient.Enabled() {
+		taskSvc.Dingtalk = dingClient
+	}
 	autopilotSvc := service.NewAutopilotService(queries, pool, bus, taskSvc)
 	registerAutopilotListeners(bus, autopilotSvc)
 
