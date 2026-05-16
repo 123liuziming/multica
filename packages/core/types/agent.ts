@@ -27,6 +27,8 @@ export interface RuntimeDevice {
   /** Defaults to "private" when the backend predates the visibility flag. */
   visibility: RuntimeVisibility;
   timezone: string;
+  /** Provider-specific config JSON (e.g. Claude settings.json). Null means no custom config. */
+  provider_config: Record<string, unknown> | null;
   last_seen_at: string | null;
   created_at: string;
   updated_at: string;

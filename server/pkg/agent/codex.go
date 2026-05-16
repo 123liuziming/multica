@@ -17,7 +17,8 @@ import (
 // codexBlockedArgs are flags hardcoded by the daemon that must not be
 // overridden by user-configured custom_args.
 var codexBlockedArgs = map[string]blockedArgMode{
-	"--listen": blockedWithValue, // stdio:// transport for daemon communication
+	"--listen":  blockedWithValue, // stdio:// transport for daemon communication
+	"--profile": blockedWithValue, // set by daemon from provider_config
 }
 
 // codexStderrTailBytes bounds the stderr tail captured for inclusion in
@@ -38,6 +39,9 @@ type codexBackend struct {
 
 func buildCodexArgs(opts ExecOptions, logger *slog.Logger) []string {
 	args := []string{"app-server", "--listen", "stdio://"}
+	if opts.ProviderConfigPath != "" {
+		args = append(args, "--profile", opts.ProviderConfigPath)
+	}
 	args = append(args, filterCustomArgs(opts.ExtraArgs, codexBlockedArgs, logger)...)
 	args = append(args, filterCustomArgs(opts.CustomArgs, codexBlockedArgs, logger)...)
 	return args

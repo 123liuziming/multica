@@ -151,6 +151,7 @@ type AgentTaskResponse struct {
 	MaxAttempts             int32                 `json:"max_attempts"`
 	ParentTaskID            *string               `json:"parent_task_id,omitempty"`
 	Agent                   *TaskAgentData        `json:"agent,omitempty"`
+	ProviderConfig          json.RawMessage       `json:"provider_config,omitempty"`
 	Repos                   []RepoData            `json:"repos,omitempty"`
 	ProjectID               string                `json:"project_id,omitempty"`        // issue's project, when present
 	ProjectTitle            string                `json:"project_title,omitempty"`     // for surfacing in agent context

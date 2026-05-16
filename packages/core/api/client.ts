@@ -767,7 +767,11 @@ export class ApiClient {
 
   async updateRuntime(
     runtimeId: string,
-    patch: { timezone?: string; visibility?: "private" | "public" },
+    patch: {
+      timezone?: string;
+      visibility?: "private" | "public";
+      provider_config?: Record<string, unknown> | null;
+    },
   ): Promise<AgentRuntime> {
     return this.fetch(`/api/runtimes/${runtimeId}`, {
       method: "PATCH",

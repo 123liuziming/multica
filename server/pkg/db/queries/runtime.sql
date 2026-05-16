@@ -69,6 +69,12 @@ SET visibility = @visibility, updated_at = now()
 WHERE id = @id
 RETURNING *;
 
+-- name: UpdateAgentRuntimeProviderConfig :one
+UPDATE agent_runtime
+SET provider_config = @provider_config, updated_at = now()
+WHERE id = @id
+RETURNING *;
+
 -- name: DeleteTaskUsageDailyForRuntime :execrows
 -- First step of an explicit user timezone edit rebuild. Delete old materialized
 -- rows before re-inserting under the runtime's new timezone.

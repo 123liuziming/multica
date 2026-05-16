@@ -113,6 +113,7 @@ function makeRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {
     owner_id: "user-me",
     visibility: "private",
     timezone: "UTC",
+    provider_config: null,
     last_seen_at: "2026-04-27T11:59:50Z",
     created_at: "2026-04-01T00:00:00Z",
     updated_at: "2026-04-01T00:00:00Z",

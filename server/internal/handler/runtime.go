@@ -30,11 +30,12 @@ type AgentRuntimeResponse struct {
 	// Visibility is "private" (default — only the owner / workspace admins
 	// can bind agents) or "public" (any workspace member can). See migration
 	// 083 and canUseRuntimeForAgent.
-	Visibility string  `json:"visibility"`
-	Timezone   string  `json:"timezone"`
-	LastSeenAt *string `json:"last_seen_at"`
-	CreatedAt  string  `json:"created_at"`
-	UpdatedAt  string  `json:"updated_at"`
+	Visibility     string           `json:"visibility"`
+	Timezone       string           `json:"timezone"`
+	ProviderConfig json.RawMessage  `json:"provider_config,omitempty"`
+	LastSeenAt     *string          `json:"last_seen_at"`
+	CreatedAt      string           `json:"created_at"`
+	UpdatedAt      string           `json:"updated_at"`
 }
 
 func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
@@ -46,23 +47,29 @@ func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
 		metadata = map[string]any{}
 	}
 
+	var providerConfig json.RawMessage
+	if rt.ProviderConfig != nil {
+		providerConfig = json.RawMessage(rt.ProviderConfig)
+	}
+
 	return AgentRuntimeResponse{
-		ID:           uuidToString(rt.ID),
-		WorkspaceID:  uuidToString(rt.WorkspaceID),
-		DaemonID:     textToPtr(rt.DaemonID),
-		Name:         rt.Name,
-		RuntimeMode:  rt.RuntimeMode,
-		Provider:     rt.Provider,
-		LaunchHeader: agent.LaunchHeader(rt.Provider),
-		Status:       rt.Status,
-		DeviceInfo:   rt.DeviceInfo,
-		Metadata:     metadata,
-		OwnerID:      uuidToPtr(rt.OwnerID),
-		Visibility:   rt.Visibility,
-		Timezone:     rt.Timezone,
-		LastSeenAt:   timestampToPtr(rt.LastSeenAt),
-		CreatedAt:    timestampToString(rt.CreatedAt),
-		UpdatedAt:    timestampToString(rt.UpdatedAt),
+		ID:             uuidToString(rt.ID),
+		WorkspaceID:    uuidToString(rt.WorkspaceID),
+		DaemonID:       textToPtr(rt.DaemonID),
+		Name:           rt.Name,
+		RuntimeMode:    rt.RuntimeMode,
+		Provider:       rt.Provider,
+		LaunchHeader:   agent.LaunchHeader(rt.Provider),
+		Status:         rt.Status,
+		DeviceInfo:     rt.DeviceInfo,
+		Metadata:       metadata,
+		OwnerID:        uuidToPtr(rt.OwnerID),
+		Visibility:     rt.Visibility,
+		Timezone:       rt.Timezone,
+		ProviderConfig: providerConfig,
+		LastSeenAt:     timestampToPtr(rt.LastSeenAt),
+		CreatedAt:      timestampToString(rt.CreatedAt),
+		UpdatedAt:      timestampToString(rt.UpdatedAt),
 	}
 }
 
@@ -446,6 +453,10 @@ type UpdateAgentRuntimeRequest struct {
 	// or workspace admins can bind agents) and "public" (any workspace
 	// member can). Owner / workspace admin only, gated by canEditRuntime.
 	Visibility *string `json:"visibility,omitempty"`
+	// ProviderConfig is the raw JSON config for the provider's CLI tool
+	// (e.g. Claude settings.json, Codex config.json). Written into the
+	// task working directory at execution time; null clears the config.
+	ProviderConfig *json.RawMessage `json:"provider_config,omitempty"`
 }
 
 // UpdateAgentRuntime handles PATCH /api/runtimes/:id. Currently only the
@@ -491,10 +502,12 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 	// returned early when `timezone == rt.Timezone`, silently dropping a
 	// concurrent visibility patch in the same request body.
 	var (
-		newTimezone    string
-		needTimezone   bool
-		newVisibility  string
-		needVisibility bool
+		newTimezone        string
+		needTimezone       bool
+		newVisibility      string
+		needVisibility     bool
+		newProviderConfig  []byte
+		needProviderConfig bool
 	)
 	if req.Timezone != nil {
 		tz := *req.Timezone
@@ -519,6 +532,24 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		if v != rt.Visibility {
 			newVisibility = v
 			needVisibility = true
+		}
+	}
+	if req.ProviderConfig != nil {
+		raw := *req.ProviderConfig
+		if raw == nil {
+			needProviderConfig = true
+			newProviderConfig = nil
+		} else {
+			if !json.Valid(raw) {
+				writeError(w, http.StatusBadRequest, "provider_config must be valid JSON")
+				return
+			}
+			if len(raw) > 65536 {
+				writeError(w, http.StatusBadRequest, "provider_config too large (max 64KB)")
+				return
+			}
+			needProviderConfig = true
+			newProviderConfig = raw
 		}
 	}
 
@@ -582,6 +613,22 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		// Notify connected clients that runtime metadata changed so the
 		// list/detail pages refresh — matches the pattern used by
 		// DeleteAgentRuntime.
+		h.publish(protocol.EventDaemonRegister, uuidToString(rt.WorkspaceID), "member", uuidToString(member.UserID), map[string]any{
+			"action": "update",
+		})
+	}
+
+	if needProviderConfig {
+		updated, err := h.Queries.UpdateAgentRuntimeProviderConfig(r.Context(), db.UpdateAgentRuntimeProviderConfigParams{
+			ID:             runtimeUUID,
+			ProviderConfig: newProviderConfig,
+		})
+		if err != nil {
+			slog.Error("UpdateAgentRuntimeProviderConfig failed", "error", err, "runtime_id", runtimeID)
+			writeError(w, http.StatusInternalServerError, "failed to update runtime")
+			return
+		}
+		rt = updated
 		h.publish(protocol.EventDaemonRegister, uuidToString(rt.WorkspaceID), "member", uuidToString(member.UserID), map[string]any{
 			"action": "update",
 		})

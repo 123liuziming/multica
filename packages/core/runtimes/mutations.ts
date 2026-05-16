@@ -26,7 +26,11 @@ export function useUpdateRuntime(wsId: string) {
       patch,
     }: {
       runtimeId: string;
-      patch: { timezone?: string; visibility?: "private" | "public" };
+      patch: {
+        timezone?: string;
+        visibility?: "private" | "public";
+        provider_config?: Record<string, unknown> | null;
+      };
     }) => api.updateRuntime(runtimeId, patch),
     onSettled: (_data, _err, vars) => {
       qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });

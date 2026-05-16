@@ -45,6 +45,7 @@ import { availabilityConfig, workloadConfig } from "../../agents/presence";
 import { formatLastSeen } from "../utils";
 import { HealthBadge } from "./shared";
 import { ProviderLogo } from "./provider-logo";
+import { ProviderConfigEditor } from "./provider-config-editor";
 import { UpdateSection } from "./update-section";
 import { UsageSection } from "./usage-section";
 import { useT } from "../../i18n";
@@ -530,6 +531,14 @@ function DiagnosticsCard({
             <TimezoneReadout runtime={runtime} />
           )}
         </div>
+        {canDelete && (
+          <div className="border-t pt-3">
+            <div className="mb-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+              {t(($) => $.detail.diagnostics_provider_config)}
+            </div>
+            <ProviderConfigEditor runtime={runtime} />
+          </div>
+        )}
         {isLocal && (
           <div className="border-t pt-3">
             <div className="mb-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">

@@ -46,6 +46,7 @@ function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
     device_info: "",
     metadata: {},
     daemon_id: null,
+    provider_config: null,
     last_seen_at: new Date().toISOString(),
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),

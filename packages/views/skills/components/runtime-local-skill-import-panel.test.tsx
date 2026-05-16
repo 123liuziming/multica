@@ -90,6 +90,7 @@ describe("RuntimeLocalSkillImportPanel", () => {
             device_info: "",
             metadata: {},
             owner_id: "user-1",
+            provider_config: null,
             last_seen_at: null,
             created_at: "2026-04-16T00:00:00Z",
             updated_at: "2026-04-16T00:00:00Z",

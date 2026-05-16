@@ -2047,6 +2047,15 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if err != nil {
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
 	}
+	var providerConfigPath string
+	if len(task.ProviderConfig) > 0 {
+		p, err := execenv.InjectProviderConfig(env.WorkDir, env.CodexHome, provider, task.ProviderConfig)
+		if err != nil {
+			d.logger.Warn("execenv: inject provider config failed (non-fatal)", "error", err)
+		} else {
+			providerConfigPath = p
+		}
+	}
 	// NOTE: No cleanup — workdir is preserved for reuse by future tasks on
 	// the same (agent, issue) pair. The work_dir path is stored in DB on
 	// task completion and passed back via PriorWorkDir on the next claim.
@@ -2162,6 +2171,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ExtraArgs:                 extraArgs,
 		CustomArgs:                customArgs,
 		McpConfig:                 mcpConfig,
+		ProviderConfigPath:        providerConfigPath,
 	}
 	// Some providers do not reliably load the per-task runtime config files we
 	// write into the task workdir:
