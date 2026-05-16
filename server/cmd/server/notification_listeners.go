@@ -19,6 +19,7 @@ import (
 // DingTalk is not configured it stays nil and PushInbox no-ops (Enabled()
 // is false on a nil receiver).
 var dingClient *dingtalk.Client
+var ccConnectClient *dingtalk.CCConnectClient
 
 // mention represents a parsed @mention from markdown content (local alias).
 type mention struct {
@@ -364,7 +365,7 @@ func notifyIssueSubscribers(
 			ActorID:     e.ActorID,
 			Payload:     map[string]any{"item": resp},
 		})
-		dingtalk.PushInbox(ctx, dingClient, queries, item)
+		dingtalk.PushInbox(ctx, dingClient, ccConnectClient, queries, item)
 	}
 
 	return notified
@@ -429,7 +430,7 @@ func notifyDirect(
 		ActorID:     e.ActorID,
 		Payload:     map[string]any{"item": resp},
 	})
-	dingtalk.PushInbox(ctx, dingClient, queries, item)
+	dingtalk.PushInbox(ctx, dingClient, ccConnectClient, queries, item)
 }
 
 // notifyMentionedMembers creates inbox items for each @mentioned member,
@@ -539,7 +540,7 @@ func notifyMentionedMembers(
 			ActorID:     e.ActorID,
 			Payload:     map[string]any{"item": resp},
 		})
-		dingtalk.PushInbox(context.Background(), dingClient, queries, item)
+		dingtalk.PushInbox(context.Background(), dingClient, ccConnectClient, queries, item)
 	}
 }
 
@@ -550,8 +551,9 @@ func notifyMentionedMembers(
 // NOTE: uses context.Background() because the event bus dispatches synchronously
 // within the HTTP request goroutine. Adding per-handler timeouts is a bus-level
 // concern — see events.Bus for future improvements.
-func registerNotificationListeners(bus *events.Bus, queries *db.Queries, ding *dingtalk.Client) {
+func registerNotificationListeners(bus *events.Bus, queries *db.Queries, ding *dingtalk.Client, cc *dingtalk.CCConnectClient) {
 	dingClient = ding
+	ccConnectClient = cc
 	ctx := context.Background()
 
 	// issue:created — Direct notification to assignee if assignee != actor

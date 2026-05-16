@@ -258,10 +258,14 @@ func main() {
 		AppSecret: os.Getenv("DINGTALK_APP_SECRET"),
 		RobotCode: os.Getenv("DINGTALK_ROBOT_CODE"),
 	})
+	ccClient := dingtalk.NewCCConnectClient(os.Getenv("CC_CONNECT_SOCKET"))
 	if dingClient.Enabled() {
 		slog.Info("dingtalk: inbox push enabled")
 	} else {
 		slog.Info("dingtalk: inbox push disabled (DINGTALK_APP_KEY/SECRET/ROBOT_CODE not all set)")
+	}
+	if ccClient.Enabled() {
+		slog.Info("dingtalk: cc-connect relay enabled", "socket", os.Getenv("CC_CONNECT_SOCKET"))
 	}
 
 	// Order matters: subscriber listeners must register BEFORE notification listeners.
@@ -269,7 +273,7 @@ func main() {
 	// so subscribers must be written first within the same synchronous event dispatch.
 	registerSubscriberListeners(bus, queries)
 	registerActivityListeners(bus, queries)
-	registerNotificationListeners(bus, queries, dingClient)
+	registerNotificationListeners(bus, queries, dingClient, ccClient)
 
 	metricsConfig := obsmetrics.ConfigFromEnv()
 	var metricsServer *http.Server
@@ -318,6 +322,9 @@ func main() {
 	taskSvc.Analytics = analyticsClient
 	if dingClient.Enabled() {
 		taskSvc.Dingtalk = dingClient
+	}
+	if ccClient.Enabled() {
+		taskSvc.CCConnect = ccClient
 	}
 	autopilotSvc := service.NewAutopilotService(queries, pool, bus, taskSvc)
 	registerAutopilotListeners(bus, autopilotSvc)

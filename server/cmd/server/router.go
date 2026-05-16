@@ -81,7 +81,8 @@ type RouterOptions struct {
 	// Dingtalk is optional. When non-nil and Enabled, the Handler's
 	// TaskService mirrors inbox notifications into the recipient's 1:1
 	// DingTalk chat.
-	Dingtalk *dingtalk.Client
+	Dingtalk  *dingtalk.Client
+	CCConnect *dingtalk.CCConnectClient
 }
 
 func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb *redis.Client, opts RouterOptions) chi.Router {
@@ -119,6 +120,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	if opts.Dingtalk.Enabled() {
 		h.TaskService.Dingtalk = opts.Dingtalk
+	}
+	if opts.CCConnect.Enabled() {
+		h.TaskService.CCConnect = opts.CCConnect
 	}
 	if rdb != nil {
 		h.UpdateStore = handler.NewRedisUpdateStore(rdb)

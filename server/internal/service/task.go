@@ -35,7 +35,8 @@ type TaskService struct {
 	// for Alibaba employees are mirrored into a 1:1 DingTalk chat. nil
 	// receivers are treated as "feature disabled" — call sites do not
 	// branch on it.
-	Dingtalk *dingtalk.Client
+	Dingtalk   *dingtalk.Client
+	CCConnect  *dingtalk.CCConnectClient
 	// EmptyClaim caches "this runtime has no queued task" so the daemon
 	// poll path can skip a Postgres scan on the steady-state empty case.
 	// Optional — a nil cache disables the fast path and every claim
@@ -2018,7 +2019,7 @@ func (s *TaskService) notifyQuickCreateCompleted(ctx context.Context, task db.Ag
 		return
 	}
 	s.publishQuickCreateInbox(item, qc.WorkspaceID, util.UUIDToString(task.AgentID), issue.Status)
-	dingtalk.PushInbox(ctx, s.Dingtalk, s.Queries, item)
+	dingtalk.PushInbox(ctx, s.Dingtalk, s.CCConnect, s.Queries, item)
 }
 
 // notifyQuickCreateFailed writes a failure inbox notification carrying the
@@ -2061,7 +2062,7 @@ func (s *TaskService) notifyQuickCreateFailed(ctx context.Context, task db.Agent
 		return
 	}
 	s.publishQuickCreateInbox(item, qc.WorkspaceID, util.UUIDToString(task.AgentID), "")
-	dingtalk.PushInbox(ctx, s.Dingtalk, s.Queries, item)
+	dingtalk.PushInbox(ctx, s.Dingtalk, s.CCConnect, s.Queries, item)
 }
 
 // publishQuickCreateInbox emits the WS event so the requester's inbox list

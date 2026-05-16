@@ -30,7 +30,9 @@ services:
       - "${PORT:-18080}:8080"
     volumes:
       - backend_uploads:/app/data/uploads
+      - ${CC_CONNECT_RUN_DIR:-/home/admin/.cc-connect/run}:/cc-connect-run:ro
     environment:
+      CC_CONNECT_SOCKET: ${CC_CONNECT_SOCKET:-/cc-connect-run/api.sock}
       DATABASE_URL: postgres://${POSTGRES_USER:-multica}:${POSTGRES_PASSWORD:-multica}@postgres:5432/${POSTGRES_DB:-multica2}?sslmode=disable
       PORT: "8080"
       JWT_SECRET: ${JWT_SECRET}
