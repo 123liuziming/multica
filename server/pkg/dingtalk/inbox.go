@@ -65,6 +65,9 @@ func PushInbox(ctx context.Context, client *Client, ccClient *CCConnectClient, q
 			if issueID != "" {
 				meta["issue_id"] = issueID
 			}
+			if inboxType != "" {
+				meta["inbox_type"] = inboxType
+			}
 			if err := cc.SendNotification(ctx, dingUserID, title, md, meta); err != nil {
 				slog.Warn("dingtalk: push inbox via cc-connect failed, falling back to direct",
 					"ding_user_id", dingUserID,

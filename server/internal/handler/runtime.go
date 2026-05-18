@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -486,8 +487,13 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 	var req UpdateAgentRuntimeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
@@ -534,22 +540,29 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 			needVisibility = true
 		}
 	}
-	if req.ProviderConfig != nil {
-		raw := *req.ProviderConfig
-		if raw == nil {
+	// Go's json decoder sets *json.RawMessage to nil for BOTH "absent" and
+	// explicit "null", making them indistinguishable. Decode the raw body as a
+	// map to detect whether provider_config was actually sent.
+	var rawFields map[string]json.RawMessage
+	if err := json.Unmarshal(bodyBytes, &rawFields); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if rawPC, present := rawFields["provider_config"]; present {
+		if rawPC == nil || string(rawPC) == "null" {
 			needProviderConfig = true
 			newProviderConfig = nil
 		} else {
-			if !json.Valid(raw) {
+			if !json.Valid(rawPC) {
 				writeError(w, http.StatusBadRequest, "provider_config must be valid JSON")
 				return
 			}
-			if len(raw) > 65536 {
+			if len(rawPC) > 65536 {
 				writeError(w, http.StatusBadRequest, "provider_config too large (max 64KB)")
 				return
 			}
 			needProviderConfig = true
-			newProviderConfig = raw
+			newProviderConfig = rawPC
 		}
 	}
 
