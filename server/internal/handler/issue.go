@@ -1266,6 +1266,8 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		switch *req.OriginType {
 		case "quick_create":
 			// Allowed — daemon CLI passes this through from a quick-create task.
+		case "aone":
+			// Allowed — Aone sync service stamps issues with their Aone workitem origin.
 		default:
 			writeError(w, http.StatusBadRequest, "unsupported origin_type")
 			return
@@ -1317,6 +1319,10 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "issue with this origin already exists")
+			return
+		}
 		slog.Warn("create issue failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to create issue: "+err.Error())
 		return
@@ -1636,10 +1642,11 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Trigger the assigned agent when a member moves an issue out of backlog.
+	// Trigger the assigned agent when an issue moves out of backlog.
 	// Backlog acts as a parking lot — moving to an active status signals the
-	// issue is ready for work.
-	if statusChanged && !assigneeChanged && actorType == "member" &&
+	// issue is ready for work. Both member and agent actors can trigger this
+	// (e.g. an autopilot agent triaging backlog issues).
+	if statusChanged && !assigneeChanged &&
 		prevIssue.Status == "backlog" && issue.Status != "done" && issue.Status != "cancelled" {
 		if h.isAgentAssigneeReady(r.Context(), issue) {
 			h.TaskService.EnqueueTaskForIssue(r.Context(), issue)
@@ -2041,7 +2048,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Trigger agent when moving out of backlog (batch).
-		if statusChanged && !assigneeChanged && actorType == "member" &&
+		if statusChanged && !assigneeChanged &&
 			prevIssue.Status == "backlog" && issue.Status != "done" && issue.Status != "cancelled" {
 			if h.isAgentAssigneeReady(r.Context(), issue) {
 				h.TaskService.EnqueueTaskForIssue(r.Context(), issue)

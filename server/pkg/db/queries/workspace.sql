@@ -34,5 +34,9 @@ UPDATE workspace SET issue_counter = issue_counter + 1
 WHERE id = $1
 RETURNING issue_counter;
 
+-- name: ListWorkspacesWithAoneSetting :many
+SELECT * FROM workspace
+WHERE settings->>'aone_project_id' IS NOT NULL;
+
 -- name: DeleteWorkspace :exec
 DELETE FROM workspace WHERE id = $1;

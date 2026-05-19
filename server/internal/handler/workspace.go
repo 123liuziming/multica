@@ -128,11 +128,12 @@ func (h *Handler) GetWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 type CreateWorkspaceRequest struct {
-	Name        string  `json:"name"`
-	Slug        string  `json:"slug"`
-	Description *string `json:"description"`
-	Context     *string `json:"context"`
-	IssuePrefix *string `json:"issue_prefix"`
+	Name          string  `json:"name"`
+	Slug          string  `json:"slug"`
+	Description   *string `json:"description"`
+	Context       *string `json:"context"`
+	IssuePrefix   *string `json:"issue_prefix"`
+	AoneProjectID *string `json:"aone_project_id"`
 }
 
 func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -214,6 +215,15 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If an Aone project ID was provided, persist it in workspace settings.
+	if req.AoneProjectID != nil && strings.TrimSpace(*req.AoneProjectID) != "" {
+		settingsJSON, _ := json.Marshal(map[string]any{"aone_project_id": strings.TrimSpace(*req.AoneProjectID)})
+		ws, _ = h.Queries.UpdateWorkspace(r.Context(), db.UpdateWorkspaceParams{
+			ID:       ws.ID,
+			Settings: settingsJSON,
+		})
+	}
+
 	// "Is this the user's first workspace?" is derived in PostHog by looking
 	// at whether they have a prior workspace_created event, not stamped at
 	// emit time. Stamping here would race under concurrent creates without
@@ -225,12 +235,13 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateWorkspaceRequest struct {
-	Name        *string `json:"name"`
-	Description *string `json:"description"`
-	Context     *string `json:"context"`
-	Settings    any     `json:"settings"`
-	Repos       any     `json:"repos"`
-	IssuePrefix *string `json:"issue_prefix"`
+	Name          *string `json:"name"`
+	Description   *string `json:"description"`
+	Context       *string `json:"context"`
+	Settings      any     `json:"settings"`
+	Repos         any     `json:"repos"`
+	IssuePrefix   *string `json:"issue_prefix"`
+	AoneProjectID *string `json:"aone_project_id"`
 }
 
 func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -266,6 +277,27 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 	if req.Settings != nil {
 		s, _ := json.Marshal(req.Settings)
 		params.Settings = s
+	}
+	if req.AoneProjectID != nil {
+		// Merge aone_project_id into settings, preserving existing settings.
+		existing := map[string]any{}
+		if params.Settings != nil {
+			json.Unmarshal(params.Settings, &existing)
+		} else {
+			// Load current settings from DB to merge.
+			current, err := h.Queries.GetWorkspace(r.Context(), idUUID)
+			if err == nil && current.Settings != nil {
+				json.Unmarshal(current.Settings, &existing)
+			}
+		}
+		v := strings.TrimSpace(*req.AoneProjectID)
+		if v != "" {
+			existing["aone_project_id"] = v
+		} else {
+			delete(existing, "aone_project_id")
+		}
+		merged, _ := json.Marshal(existing)
+		params.Settings = merged
 	}
 	if req.Repos != nil {
 		reposJSON, _ := json.Marshal(req.Repos)

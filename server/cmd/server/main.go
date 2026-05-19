@@ -343,6 +343,7 @@ func main() {
 	go heartbeatScheduler.Run(sweepCtx)
 	go runAutopilotScheduler(autopilotCtx, queries, autopilotSvc)
 	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())
+	go runAoneSyncScheduler(autopilotCtx, queries, pool)
 	go runDBStatsLogger(sweepCtx, pool)
 
 	if metricsServer != nil {

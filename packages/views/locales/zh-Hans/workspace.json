@@ -4,6 +4,8 @@
     "name_placeholder": "我的工作区",
     "url_label": "工作区 URL",
     "url_placeholder": "my-workspace",
+    "aone_project_id_label": "Aone 项目 ID",
+    "aone_project_id_placeholder": "例如 1055266",
     "submit": "创建工作区",
     "submitting": "创建中...",
     "errors": {

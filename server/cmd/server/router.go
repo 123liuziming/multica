@@ -115,6 +115,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		UseDailyRollupForDashboard:    os.Getenv("USAGE_DASHBOARD_ROLLUP_ENABLED") == "true",
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	h.AoneSyncService = service.NewAoneSyncService(queries, pool)
 	if opts.DaemonWakeup != nil {
 		h.TaskService.Wakeup = opts.DaemonWakeup
 	}
@@ -309,6 +310,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 				// Owner-only access
 				r.With(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner")).Delete("/", h.DeleteWorkspace)
+				// Aone sync trigger (admin+)
+				r.With(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin")).Post("/aone-sync", h.TriggerAoneSync)
 
 				// GitHub integration — admin-only operations live here so the
 				// nesting matches the rest of /api/workspaces/{id}/* routes.

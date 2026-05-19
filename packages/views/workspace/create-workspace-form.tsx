@@ -26,6 +26,7 @@ export function CreateWorkspaceForm({ onSuccess }: CreateWorkspaceFormProps) {
   const createWorkspace = useCreateWorkspace();
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
+  const [aoneProjectId, setAoneProjectId] = useState("");
   const [slugServerError, setSlugServerError] = useState<string | null>(null);
   const slugTouched = useRef(false);
 
@@ -58,7 +59,11 @@ export function CreateWorkspaceForm({ onSuccess }: CreateWorkspaceFormProps) {
   const handleCreate = () => {
     if (!canSubmit) return;
     createWorkspace.mutate(
-      { name: name.trim(), slug: slug.trim() },
+      {
+        name: name.trim(),
+        slug: slug.trim(),
+        ...(aoneProjectId.trim() ? { aone_project_id: aoneProjectId.trim() } : {}),
+      },
       {
         onSuccess,
         onError: (error) => {
@@ -114,6 +119,22 @@ export function CreateWorkspaceForm({ onSuccess }: CreateWorkspaceFormProps) {
           {slugError && (
             <p className="text-xs text-destructive">{slugError}</p>
           )}
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="ws-aone-project-id">
+            {t(($) => $.create_form.aone_project_id_label)}
+          </Label>
+          <Input
+            id="ws-aone-project-id"
+            type="text"
+            value={aoneProjectId}
+            onChange={(e) => setAoneProjectId(e.target.value)}
+            placeholder={t(($) => $.create_form.aone_project_id_placeholder)}
+            onKeyDown={(e) => {
+              if (isImeComposing(e)) return;
+              if (e.key === "Enter") handleCreate();
+            }}
+          />
         </div>
         <Button
           className="w-full"

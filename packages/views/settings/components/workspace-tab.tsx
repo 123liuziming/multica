@@ -98,6 +98,9 @@ export function WorkspaceTab() {
   const [name, setName] = useState(workspace?.name ?? "");
   const [description, setDescription] = useState(workspace?.description ?? "");
   const [context, setContext] = useState(workspace?.context ?? "");
+  const [aoneProjectId, setAoneProjectId] = useState(
+    (workspace?.settings?.aone_project_id as string) ?? "",
+  );
   const [saving, setSaving] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
@@ -123,6 +126,7 @@ export function WorkspaceTab() {
     setName(workspace?.name ?? "");
     setDescription(workspace?.description ?? "");
     setContext(workspace?.context ?? "");
+    setAoneProjectId((workspace?.settings?.aone_project_id as string) ?? "");
   }, [workspace]);
 
   const handleSave = async () => {
@@ -133,6 +137,7 @@ export function WorkspaceTab() {
         name,
         description,
         context,
+        aone_project_id: aoneProjectId,
       });
       qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
         old?.map((ws) => (ws.id === updated.id ? updated : ws)),
@@ -249,6 +254,28 @@ export function WorkspaceTab() {
           </CardContent>
         </Card>
       </section>
+
+      {/* Integrations */}
+      {canManageWorkspace && (
+      <section className="space-y-4">
+        <h2 className="text-sm font-semibold">{t(($) => $.workspace.section_integrations)}</h2>
+
+        <Card>
+          <CardContent className="space-y-3">
+            <div>
+              <Label className="text-xs text-muted-foreground">{t(($) => $.workspace.aone_project_id_label)}</Label>
+              <Input
+                type="text"
+                value={aoneProjectId}
+                onChange={(e) => setAoneProjectId(e.target.value)}
+                className="mt-1"
+                placeholder={t(($) => $.workspace.aone_project_id_placeholder)}
+              />
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+      )}
 
       {/* Danger Zone — gated on the member query settling so the owner-only
           Delete button and the sole-owner Leave guidance don't flash in

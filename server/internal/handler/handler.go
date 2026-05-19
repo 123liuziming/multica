@@ -86,6 +86,7 @@ type Handler struct {
 	LocalSkillImportStore LocalSkillImportStore
 	LivenessStore         LivenessStore
 	HeartbeatScheduler    HeartbeatScheduler
+	AoneSyncService       *service.AoneSyncService
 	Storage               storage.Storage
 	CFSigner              *auth.CloudFrontSigner
 	Analytics             analytics.Client

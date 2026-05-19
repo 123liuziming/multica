@@ -6,7 +6,7 @@ import { workspaceKeys } from "./queries";
 export function useCreateWorkspace() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; slug: string; description?: string }) =>
+    mutationFn: (data: { name: string; slug: string; description?: string; aone_project_id?: string }) =>
       api.createWorkspace(data),
     // Seed the workspace list cache BEFORE callers navigate to /{newWs.slug}/issues.
     // The destination [workspaceSlug]/layout queries by slug from this cache;

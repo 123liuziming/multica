@@ -4,6 +4,8 @@
     "name_placeholder": "My Workspace",
     "url_label": "Workspace URL",
     "url_placeholder": "my-workspace",
+    "aone_project_id_label": "Aone Project ID",
+    "aone_project_id_placeholder": "e.g. 1055266",
     "submit": "Create workspace",
     "submitting": "Creating...",
     "errors": {

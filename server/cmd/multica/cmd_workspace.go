@@ -46,14 +46,34 @@ var workspaceUpdateCmd = &cobra.Command{
 	RunE:  runWorkspaceUpdate,
 }
 
+var workspaceCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a new workspace",
+	RunE:  runWorkspaceCreate,
+}
+
+var workspaceAoneSyncCmd = &cobra.Command{
+	Use:   "aone-sync [workspace-id]",
+	Short: "Trigger a one-time Aone→Multica issue sync for a workspace",
+	RunE:  runWorkspaceAoneSync,
+}
+
 func init() {
 	workspaceCmd.AddCommand(workspaceListCmd)
 	workspaceCmd.AddCommand(workspaceGetCmd)
 	workspaceCmd.AddCommand(workspaceMembersCmd)
 	workspaceCmd.AddCommand(workspaceUpdateCmd)
+	workspaceCmd.AddCommand(workspaceCreateCmd)
+	workspaceCmd.AddCommand(workspaceAoneSyncCmd)
 
 	workspaceGetCmd.Flags().String("output", "json", "Output format: table or json")
 	workspaceMembersCmd.Flags().String("output", "table", "Output format: table or json")
+
+	workspaceCreateCmd.Flags().String("name", "", "Workspace name (required)")
+	workspaceCreateCmd.Flags().String("slug", "", "Workspace slug (required)")
+	workspaceCreateCmd.Flags().String("description", "", "Workspace description")
+	workspaceCreateCmd.Flags().String("aone-project-id", "", "Aone project ID to enable periodic sync")
+	workspaceCreateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	workspaceUpdateCmd.Flags().String("name", "", "New workspace name")
 	workspaceUpdateCmd.Flags().String("description", "", "New description (decodes \\n, \\r, \\t, \\\\; pipe via --description-stdin to preserve literal backslashes)")
@@ -61,7 +81,58 @@ func init() {
 	workspaceUpdateCmd.Flags().String("context", "", "New workspace context (decodes \\n, \\r, \\t, \\\\; pipe via --context-stdin to preserve literal backslashes)")
 	workspaceUpdateCmd.Flags().Bool("context-stdin", false, "Read context from stdin (preserves multi-line content verbatim)")
 	workspaceUpdateCmd.Flags().String("issue-prefix", "", "New issue prefix (uppercased server-side)")
+	workspaceUpdateCmd.Flags().String("aone-project-id", "", "Aone project ID (set to enable sync, empty to disable)")
 	workspaceUpdateCmd.Flags().String("output", "json", "Output format: table or json")
+}
+
+func runWorkspaceCreate(cmd *cobra.Command, _ []string) error {
+	name, _ := cmd.Flags().GetString("name")
+	slug, _ := cmd.Flags().GetString("slug")
+	if name == "" || slug == "" {
+		return fmt.Errorf("--name and --slug are required")
+	}
+
+	body := map[string]any{
+		"name": name,
+		"slug": slug,
+	}
+	if cmd.Flags().Changed("description") {
+		v, _ := cmd.Flags().GetString("description")
+		body["description"] = v
+	}
+	if cmd.Flags().Changed("aone-project-id") {
+		v, _ := cmd.Flags().GetString("aone-project-id")
+		body["aone_project_id"] = v
+	}
+
+	serverURL := resolveServerURL(cmd)
+	token := resolveToken(cmd)
+	if token == "" {
+		return fmt.Errorf("not authenticated: run 'multica login' first")
+	}
+
+	client := cli.NewAPIClient(serverURL, "", token)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var ws map[string]any
+	if err := client.PostJSON(ctx, "/api/workspaces", body, &ws); err != nil {
+		return fmt.Errorf("create workspace: %w", err)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "table" {
+		headers := []string{"ID", "NAME", "SLUG"}
+		rows := [][]string{{
+			strVal(ws, "id"),
+			strVal(ws, "name"),
+			strVal(ws, "slug"),
+		}}
+		cli.PrintTable(os.Stdout, headers, rows)
+		return nil
+	}
+
+	return cli.PrintJSON(os.Stdout, ws)
 }
 
 func runWorkspaceList(cmd *cobra.Command, _ []string) error {
@@ -183,6 +254,10 @@ func buildWorkspaceUpdateBody(cmd *cobra.Command) (map[string]any, error) {
 		}
 		body["issue_prefix"] = v
 	}
+	if cmd.Flags().Changed("aone-project-id") {
+		v, _ := cmd.Flags().GetString("aone-project-id")
+		body["aone_project_id"] = v
+	}
 	return body, nil
 }
 
@@ -238,6 +313,28 @@ func runWorkspaceUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	return cli.PrintJSON(os.Stdout, ws)
+}
+
+func runWorkspaceAoneSync(cmd *cobra.Command, args []string) error {
+	wsID := workspaceIDFromArgs(cmd, args)
+	if wsID == "" {
+		return fmt.Errorf("workspace ID is required: pass as argument or set MULTICA_WORKSPACE_ID")
+	}
+
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	var result map[string]any
+	if err := client.PostJSON(ctx, "/api/workspaces/"+wsID+"/aone-sync", nil, &result); err != nil {
+		return fmt.Errorf("aone sync: %w", err)
+	}
+
+	return cli.PrintJSON(os.Stdout, result)
 }
 
 func runWorkspaceMembers(cmd *cobra.Command, args []string) error {
