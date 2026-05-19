@@ -35,59 +35,50 @@ func PushInbox(ctx context.Context, client *Client, ccClient *CCConnectClient, q
 	if !client.Enabled() && !ccClient.Enabled() {
 		return
 	}
+	markdown := BuildInboxMarkdown(item)
+	meta := inboxMetadata(item)
+	var skipUserID string
+
 	user, err := q.GetUser(ctx, item.RecipientID)
 	if err != nil {
 		slog.Warn("dingtalk: lookup recipient failed",
 			"inbox_type", item.Type,
 			"error", err)
-		return
-	}
-	userID, ok := UserIDFromAlibabaEmail(user.Email)
-	if !ok {
+	} else if userID, ok := UserIDFromAlibabaEmail(user.Email); ok {
+		skipUserID = userID
+
+		go func(dt *Client, cc *CCConnectClient, dingUserID, title, md, inboxType string, meta map[string]string) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			// Prefer cc-connect: it stores context so replies can be linked back to the issue.
+			if cc.Enabled() {
+				if err := cc.SendNotification(ctx, dingUserID, title, md, meta); err != nil {
+					slog.Warn("dingtalk: push inbox via cc-connect failed, falling back to direct",
+						"ding_user_id", dingUserID,
+						"inbox_type", inboxType,
+						"error", err)
+					// Fall through to direct DingTalk
+				} else {
+					return
+				}
+			}
+
+			if dt.Enabled() {
+				if err := dt.BatchSendOTOMarkdown(ctx, []string{dingUserID}, title, md); err != nil {
+					slog.Warn("dingtalk: push inbox failed",
+						"ding_user_id", dingUserID,
+						"inbox_type", inboxType,
+						"error", err)
+				}
+			}
+		}(client, ccClient, userID, item.Title, markdown, item.Type, meta)
+	} else {
 		slog.Debug("dingtalk: skipping non-alibaba email",
 			"inbox_type", item.Type)
-		return
 	}
-	markdown := BuildInboxMarkdown(item)
-	wsID := formatUUID(item.WorkspaceID)
-	issueID := formatUUID(item.IssueID)
 
-	go func(dt *Client, cc *CCConnectClient, dingUserID, title, md, inboxType, wsID, issueID string) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		// Prefer cc-connect: it stores context so replies can be linked back to the issue.
-		if cc.Enabled() {
-			meta := map[string]string{}
-			if wsID != "" {
-				meta["workspace_id"] = wsID
-			}
-			if issueID != "" {
-				meta["issue_id"] = issueID
-			}
-			if inboxType != "" {
-				meta["inbox_type"] = inboxType
-			}
-			if err := cc.SendNotification(ctx, dingUserID, title, md, meta); err != nil {
-				slog.Warn("dingtalk: push inbox via cc-connect failed, falling back to direct",
-					"ding_user_id", dingUserID,
-					"inbox_type", inboxType,
-					"error", err)
-				// Fall through to direct DingTalk
-			} else {
-				return
-			}
-		}
-
-		if dt.Enabled() {
-			if err := dt.BatchSendOTOMarkdown(ctx, []string{dingUserID}, title, md); err != nil {
-				slog.Warn("dingtalk: push inbox failed",
-					"ding_user_id", dingUserID,
-					"inbox_type", inboxType,
-					"error", err)
-			}
-		}
-	}(client, ccClient, userID, item.Title, markdown, item.Type, wsID, issueID)
+	pushAoneLinkedTargets(ctx, client, ccClient, item, skipUserID)
 }
 
 // BuildInboxMarkdown renders a Multica inbox item as a DingTalk
@@ -95,8 +86,9 @@ func PushInbox(ctx context.Context, client *Client, ccClient *CCConnectClient, q
 // (title, severity, type, body, details JSON) so a recipient who only
 // reads DingTalk gets the same information.
 //
-// A machine-parseable [multica:...] context line is appended so that
-// cc-connect can extract workspace/issue IDs when the user replies.
+// A machine-parseable [multica:...] context line is retained as a legacy
+// fallback. The authoritative reply context for cc-connect is sent in
+// /notify.metadata by PushInbox.
 func BuildInboxMarkdown(item db.InboxItem) string {
 	var b strings.Builder
 	b.WriteString("### Multica · ")

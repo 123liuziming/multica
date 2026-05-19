@@ -188,6 +188,73 @@ func TestBatchSendOTOMarkdownEncodesRequest(t *testing.T) {
 	}
 }
 
+func TestSendGroupMarkdownEncodesRequest(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"accessToken":"tok","expireIn":7200}`))
+	})
+
+	type seenT struct {
+		Auth     string
+		Method   string
+		Body     map[string]any
+		MsgParam map[string]string
+	}
+	seenCh := make(chan seenT, 1)
+	mux.HandleFunc("/group", func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		var mp map[string]string
+		if s, ok := body["msgParam"].(string); ok {
+			_ = json.Unmarshal([]byte(s), &mp)
+		}
+		seenCh <- seenT{
+			Auth:     r.Header.Get("x-acs-dingtalk-access-token"),
+			Method:   r.Method,
+			Body:     body,
+			MsgParam: mp,
+		}
+		_, _ = w.Write([]byte(`{"processQueryKey":"q1"}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewClient(Config{
+		AppKey: "k", AppSecret: "s", RobotCode: "robot-x",
+		AccessTokenURL: srv.URL + "/token",
+		GroupSendURL:   srv.URL + "/group",
+	})
+	if c == nil {
+		t.Fatal("nil client")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := c.SendGroupMarkdown(ctx, "cid123", "**body**"); err != nil {
+		t.Fatalf("SendGroupMarkdown: %v", err)
+	}
+
+	seen := <-seenCh
+	if seen.Method != http.MethodPost {
+		t.Errorf("method = %s; want POST", seen.Method)
+	}
+	if seen.Auth != "tok" {
+		t.Errorf("token header = %q", seen.Auth)
+	}
+	if seen.Body["robotCode"] != "robot-x" {
+		t.Errorf("robotCode = %v", seen.Body["robotCode"])
+	}
+	if seen.Body["openConversationId"] != "cid123" {
+		t.Errorf("openConversationId = %v", seen.Body["openConversationId"])
+	}
+	if seen.Body["msgKey"] != "sampleMarkdown" {
+		t.Errorf("msgKey = %v", seen.Body["msgKey"])
+	}
+	if seen.MsgParam["text"] != "**body**" {
+		t.Errorf("msgParam = %#v", seen.MsgParam)
+	}
+}
+
 func TestBatchSendOTOMarkdownNoOpOnEmptyUsers(t *testing.T) {
 	c := NewClient(Config{AppKey: "k", AppSecret: "s", RobotCode: "r"})
 	if err := c.BatchSendOTOMarkdown(context.Background(), nil, "t", "b"); err != nil {

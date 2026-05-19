@@ -22,6 +22,7 @@ import (
 const (
 	defaultAccessTokenURL = "https://api.dingtalk.com/v1.0/oauth2/accessToken"
 	defaultBatchSendURL   = "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend"
+	defaultGroupSendURL   = "https://api.dingtalk.com/v1.0/robot/groupMessages/send"
 	defaultRequestTimeout = 5 * time.Second
 	tokenRefreshSafety    = 60 * time.Second
 )
@@ -35,6 +36,7 @@ type Config struct {
 	// Optional overrides used by tests.
 	AccessTokenURL string
 	BatchSendURL   string
+	GroupSendURL   string
 	HTTPClient     *http.Client
 }
 
@@ -59,6 +61,9 @@ func NewClient(cfg Config) *Client {
 	}
 	if cfg.BatchSendURL == "" {
 		cfg.BatchSendURL = defaultBatchSendURL
+	}
+	if cfg.GroupSendURL == "" {
+		cfg.GroupSendURL = defaultGroupSendURL
 	}
 	hc := cfg.HTTPClient
 	if hc == nil {
@@ -153,6 +158,43 @@ func (c *Client) BatchSendOTOMarkdown(ctx context.Context, userIDs []string, tit
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("dingtalk: batchSendOTO: status %d body=%s", resp.StatusCode, string(raw))
+	}
+	return nil
+}
+
+// SendGroupMarkdown delivers a `sampleMarkdown` chatbot message to a DingTalk
+// group by openConversationId.
+func (c *Client) SendGroupMarkdown(ctx context.Context, openConversationID, markdown string) error {
+	if !c.Enabled() || strings.TrimSpace(openConversationID) == "" {
+		return nil
+	}
+	token, err := c.AccessToken(ctx)
+	if err != nil {
+		return err
+	}
+	param, _ := json.Marshal(map[string]string{
+		"text": markdown,
+	})
+	body, _ := json.Marshal(map[string]any{
+		"robotCode":          c.cfg.RobotCode,
+		"openConversationId": openConversationID,
+		"msgKey":             "sampleMarkdown",
+		"msgParam":           string(param),
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.GroupSendURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-acs-dingtalk-access-token", token)
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("dingtalk: groupMessages/send: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("dingtalk: groupMessages/send: status %d body=%s", resp.StatusCode, string(raw))
 	}
 	return nil
 }

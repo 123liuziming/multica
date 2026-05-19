@@ -75,6 +75,25 @@ func TestBuildInboxMarkdownIncludesContextFooter(t *testing.T) {
 	}
 }
 
+func TestInboxMetadataIncludesReplyContext(t *testing.T) {
+	item := db.InboxItem{
+		WorkspaceID: makeTestUUID(0xaa),
+		IssueID:     makeTestUUID(0xbb),
+		Type:        "status_changed",
+	}
+	got := inboxMetadata(item)
+	want := map[string]string{
+		"workspace_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		"issue_id":     "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+		"inbox_type":   "status_changed",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("metadata[%q] = %q; want %q", k, got[k], v)
+		}
+	}
+}
+
 func TestBuildInboxMarkdownOmitsContextWhenMissingIDs(t *testing.T) {
 	item := db.InboxItem{
 		Title:    "No IDs",
