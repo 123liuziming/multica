@@ -664,17 +664,17 @@ func (s *TaskService) CancelTasksForAgent(ctx context.Context, agentID pgtype.UU
 // the comment row is deleted because the FK ON DELETE SET NULL would
 // otherwise nullify trigger_comment_id and we'd lose the ability to find
 // the affected tasks.
-func (s *TaskService) CancelTasksByTriggerComment(ctx context.Context, commentID pgtype.UUID) error {
+func (s *TaskService) CancelTasksByTriggerComment(ctx context.Context, commentID pgtype.UUID) ([]db.AgentTaskQueue, error) {
 	cancelled, err := s.Queries.CancelAgentTasksByTriggerComment(ctx, commentID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, t := range cancelled {
 		s.captureTaskCancelled(ctx, t)
 		s.ReconcileAgentStatus(ctx, t.AgentID)
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
 	}
-	return nil
+	return cancelled, nil
 }
 
 // BroadcastCancelledTasks reconciles each affected agent's status and emits

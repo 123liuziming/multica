@@ -21,6 +21,7 @@ import { api } from "@multica/core/api";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { isImeComposing, timeAgo } from "@multica/core/utils";
 import { Button } from "@multica/ui/components/ui/button";
+import { Switch } from "@multica/ui/components/ui/switch";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { Input } from "@multica/ui/components/ui/input";
 import {
@@ -144,6 +145,13 @@ export function AgentDetailInspector({
             onChange={(n) => update({ max_concurrent_tasks: n })}
           />
         </PropRow>
+        <PropRow label={t(($) => $.inspector.prop_allow_ask_user_question)} interactive={false}>
+          <AllowAskUserQuestionToggle
+            value={agent.allow_ask_user_question}
+            canEdit={canEdit}
+            onChange={(v) => update({ allow_ask_user_question: v })}
+          />
+        </PropRow>
       </Section>
 
       {/* Details — read-only (no hover, no chip styling — these aren't clickable) */}
@@ -218,6 +226,36 @@ function Section({
         {children}
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Allow-ask-user-question toggle. The flag only applies to tasks queued
+// AFTER toggling — in-flight tasks keep whatever was wired in at dispatch
+// time, and historical questions stay visible even after the flag flips
+// back off.
+// ---------------------------------------------------------------------------
+function AllowAskUserQuestionToggle({
+  value,
+  canEdit,
+  onChange,
+}: {
+  value: boolean;
+  canEdit: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  if (!canEdit) {
+    return (
+      <span className="text-muted-foreground">{value ? "On" : "Off"}</span>
+    );
+  }
+  return (
+    <Switch
+      size="sm"
+      checked={value}
+      onCheckedChange={(checked) => onChange(!!checked)}
+      aria-label="Allow asking user questions"
+    />
   );
 }
 

@@ -1089,14 +1089,15 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			mcpConfig = json.RawMessage(agent.McpConfig)
 		}
 		resp.Agent = &TaskAgentData{
-			ID:           uuidToString(agent.ID),
-			Name:         agent.Name,
-			Instructions: agent.Instructions,
-			Skills:       skills,
-			CustomEnv:    customEnv,
-			CustomArgs:   customArgs,
-			McpConfig:    mcpConfig,
-			Model:        agent.Model.String,
+			ID:                   uuidToString(agent.ID),
+			Name:                 agent.Name,
+			Instructions:         agent.Instructions,
+			Skills:               skills,
+			CustomEnv:            customEnv,
+			CustomArgs:           customArgs,
+			McpConfig:            mcpConfig,
+			Model:                agent.Model.String,
+			AllowAskUserQuestion: agent.AllowAskUserQuestion,
 		}
 	}
 
@@ -1454,6 +1455,9 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			slog.Error("task claim: cancel after workspace check failed",
 				"task_id", uuidToString(task.ID), "error", cerr)
 		}
+		// Defensive: should be a no-op since no agent has run yet, but keep
+		// the contract that every cancel path drops pending questions.
+		h.deletePendingQuestionsForTask(r.Context(), task.ID)
 		writeError(w, http.StatusInternalServerError, "task workspace isolation check failed")
 		return
 	}
@@ -1573,6 +1577,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.emitIssueExecutedOnFirstCompletion(r, task)
+	h.cancelPendingQuestionsForTask(r.Context(), *task)
 
 	slog.Info("task completed", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 	writeJSON(w, http.StatusOK, taskToResponse(*task))
@@ -1706,6 +1711,8 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	h.cancelPendingQuestionsForTask(r.Context(), *task)
 
 	slog.Info("task failed", "task_id", taskID, "agent_id", uuidToString(task.AgentID), "task_error", req.Error, "failure_reason", req.FailureReason)
 	writeJSON(w, http.StatusOK, taskToResponse(*task))
@@ -1898,6 +1905,8 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	h.cancelPendingQuestionsForTask(r.Context(), *task)
 
 	slog.Info("task cancelled by user", "task_id", taskID, "issue_id", uuidToString(task.IssueID))
 	writeJSON(w, http.StatusOK, taskToResponse(*task))

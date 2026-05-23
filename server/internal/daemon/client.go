@@ -217,6 +217,95 @@ func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDi
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/fail", taskID), body, nil)
 }
 
+// CreateTaskQuestions forwards an AskUserQuestion batch from the hook
+// script to the server. Returns the persisted records (with server-assigned
+// IDs) so the caller knows what to long-poll for.
+func (c *Client) CreateTaskQuestions(ctx context.Context, taskID string, questions []QuestionPayload) ([]createdQuestion, error) {
+	body := map[string]any{"questions": questions}
+	var resp []createdQuestion
+	if err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/questions", taskID), body, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// WaitForQuestion long-polls the server until the question terminates
+// (answered or cancelled). The server returns 204 when its short poll
+// window expires while still pending; we loop until ctx is done.
+//
+// Each iteration runs in its own deferred-cancel scope so the per-request
+// context stays alive while resp.Body is decoded. Calling cancel() on the
+// reqCtx before reading the body would race the body reader against
+// transport teardown — the response is small JSON, but a slow link or a
+// retry mid-buffer could surface as a `context canceled` decode error.
+func (c *Client) WaitForQuestion(ctx context.Context, questionID string) (createdQuestion, error) {
+	path := fmt.Sprintf("/api/daemon/questions/%s/wait", questionID)
+	for {
+		if err := ctx.Err(); err != nil {
+			return createdQuestion{}, err
+		}
+		out, retry, err := c.waitForQuestionOnce(ctx, path)
+		if err != nil {
+			return createdQuestion{}, err
+		}
+		if retry {
+			continue
+		}
+		return out, nil
+	}
+}
+
+// waitForQuestionOnce performs a single long-poll attempt. Returns
+// (out, false, nil) on a terminal answer, (zero, true, nil) on retry-eligible
+// outcomes (204, transient network error), and (zero, false, err) on a
+// hard failure that should propagate to the caller.
+func (c *Client) waitForQuestionOnce(ctx context.Context, path string) (createdQuestion, bool, error) {
+	// Per-request timeout is slightly larger than the server's poll
+	// window (25s) to absorb network jitter without giving up.
+	reqCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return createdQuestion{}, false, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	c.setIdentityHeaders(req)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		// Outer ctx cancel (parent gave up) — surface that. Otherwise this
+		// is a transient blip on the per-request context or the network;
+		// retry.
+		if ctx.Err() != nil {
+			return createdQuestion{}, false, ctx.Err()
+		}
+		return createdQuestion{}, true, nil
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusNoContent:
+		return createdQuestion{}, true, nil
+	case http.StatusOK:
+		var out createdQuestion
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return createdQuestion{}, false, err
+		}
+		return out, false, nil
+	default:
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return createdQuestion{}, false, &requestError{
+			Method:     http.MethodGet,
+			Path:       path,
+			StatusCode: resp.StatusCode,
+			Body:       strings.TrimSpace(string(data)),
+		}
+	}
+}
+
 // PinTaskSession persists the agent's session_id and work_dir on the task
 // row mid-flight so a daemon crash doesn't lose the resume pointer.
 func (c *Client) PinTaskSession(ctx context.Context, taskID, sessionID, workDir string) error {

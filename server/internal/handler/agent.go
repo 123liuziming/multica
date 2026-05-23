@@ -47,10 +47,15 @@ type AgentResponse struct {
 	Model              string              `json:"model"`
 	OwnerID            *string             `json:"owner_id"`
 	Skills             []AgentSkillSummary `json:"skills"`
-	CreatedAt          string              `json:"created_at"`
-	UpdatedAt          string              `json:"updated_at"`
-	ArchivedAt         *string             `json:"archived_at"`
-	ArchivedBy         *string             `json:"archived_by"`
+	// AllowAskUserQuestion enables the AskUserQuestion PreToolUse hook for
+	// tasks spawned by this agent. Only takes effect on tasks queued AFTER
+	// the flag is toggled — in-flight tasks keep whatever was wired in at
+	// dispatch time.
+	AllowAskUserQuestion bool   `json:"allow_ask_user_question"`
+	CreatedAt            string `json:"created_at"`
+	UpdatedAt            string `json:"updated_at"`
+	ArchivedAt           *string `json:"archived_at"`
+	ArchivedBy           *string `json:"archived_by"`
 }
 
 func agentToResponse(a db.Agent) AgentResponse {
@@ -102,14 +107,15 @@ func agentToResponse(a db.Agent) AgentResponse {
 		McpConfig:          mcpConfig,
 		Visibility:         a.Visibility,
 		Status:             a.Status,
-		MaxConcurrentTasks: a.MaxConcurrentTasks,
-		Model:              a.Model.String,
-		OwnerID:            uuidToPtr(a.OwnerID),
-		Skills:             []AgentSkillSummary{},
-		CreatedAt:          timestampToString(a.CreatedAt),
-		UpdatedAt:          timestampToString(a.UpdatedAt),
-		ArchivedAt:         timestampToPtr(a.ArchivedAt),
-		ArchivedBy:         uuidToPtr(a.ArchivedBy),
+		MaxConcurrentTasks:   a.MaxConcurrentTasks,
+		Model:                a.Model.String,
+		OwnerID:              uuidToPtr(a.OwnerID),
+		Skills:               []AgentSkillSummary{},
+		AllowAskUserQuestion: a.AllowAskUserQuestion,
+		CreatedAt:            timestampToString(a.CreatedAt),
+		UpdatedAt:            timestampToString(a.UpdatedAt),
+		ArchivedAt:           timestampToPtr(a.ArchivedAt),
+		ArchivedBy:           uuidToPtr(a.ArchivedBy),
 	}
 }
 
@@ -193,14 +199,15 @@ type ChatAttachmentMeta struct {
 // TaskAgentData holds agent info included in claim responses so the daemon
 // can set up the execution environment (branch naming, skill files, instructions).
 type TaskAgentData struct {
-	ID           string                   `json:"id"`
-	Name         string                   `json:"name"`
-	Instructions string                   `json:"instructions"`
-	Skills       []service.AgentSkillData `json:"skills,omitempty"`
-	CustomEnv    map[string]string        `json:"custom_env,omitempty"`
-	CustomArgs   []string                 `json:"custom_args,omitempty"`
-	McpConfig    json.RawMessage          `json:"mcp_config,omitempty"`
-	Model        string                   `json:"model,omitempty"`
+	ID                   string                   `json:"id"`
+	Name                 string                   `json:"name"`
+	Instructions         string                   `json:"instructions"`
+	Skills               []service.AgentSkillData `json:"skills,omitempty"`
+	CustomEnv            map[string]string        `json:"custom_env,omitempty"`
+	CustomArgs           []string                 `json:"custom_args,omitempty"`
+	McpConfig            json.RawMessage          `json:"mcp_config,omitempty"`
+	Model                string                   `json:"model,omitempty"`
+	AllowAskUserQuestion bool                     `json:"allow_ask_user_question,omitempty"`
 }
 
 func taskToResponse(t db.AgentTaskQueue) AgentTaskResponse {
@@ -388,9 +395,10 @@ type CreateAgentRequest struct {
 	CustomEnv          map[string]string `json:"custom_env"`
 	CustomArgs         []string          `json:"custom_args"`
 	McpConfig          json.RawMessage   `json:"mcp_config"`
-	Visibility         string            `json:"visibility"`
-	MaxConcurrentTasks int32             `json:"max_concurrent_tasks"`
-	Model              string            `json:"model"`
+	Visibility           string            `json:"visibility"`
+	MaxConcurrentTasks   int32             `json:"max_concurrent_tasks"`
+	Model                string            `json:"model"`
+	AllowAskUserQuestion bool              `json:"allow_ask_user_question"`
 	// Template records which template slug was used to seed this agent
 	// (e.g. "coding" / "planning" / "writing" / "assistant"). Empty when
 	// the caller didn't come from a template picker — the `agent_created`
@@ -512,21 +520,22 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agent, err := h.Queries.CreateAgent(r.Context(), db.CreateAgentParams{
-		WorkspaceID:        wsUUID,
-		Name:               req.Name,
-		Description:        req.Description,
-		Instructions:       req.Instructions,
-		AvatarUrl:          ptrToText(req.AvatarURL),
-		RuntimeMode:        runtime.RuntimeMode,
-		RuntimeConfig:      rc,
-		RuntimeID:          runtime.ID,
-		Visibility:         req.Visibility,
-		MaxConcurrentTasks: req.MaxConcurrentTasks,
-		OwnerID:            parseUUID(ownerID),
-		CustomEnv:          ce,
-		CustomArgs:         ca,
-		McpConfig:          mc,
-		Model:              pgtype.Text{String: req.Model, Valid: req.Model != ""},
+		WorkspaceID:          wsUUID,
+		Name:                 req.Name,
+		Description:          req.Description,
+		Instructions:         req.Instructions,
+		AvatarUrl:            ptrToText(req.AvatarURL),
+		RuntimeMode:          runtime.RuntimeMode,
+		RuntimeConfig:        rc,
+		RuntimeID:            runtime.ID,
+		Visibility:           req.Visibility,
+		MaxConcurrentTasks:   req.MaxConcurrentTasks,
+		OwnerID:              parseUUID(ownerID),
+		CustomEnv:            ce,
+		CustomArgs:           ca,
+		McpConfig:            mc,
+		Model:                pgtype.Text{String: req.Model, Valid: req.Model != ""},
+		AllowAskUserQuestion: req.AllowAskUserQuestion,
 	})
 	if err != nil {
 		// Unique constraint on (workspace_id, name) — return a clear conflict error
@@ -574,10 +583,11 @@ type UpdateAgentRequest struct {
 	CustomEnv          *map[string]string `json:"custom_env"`
 	CustomArgs         *[]string          `json:"custom_args"`
 	McpConfig          *json.RawMessage   `json:"mcp_config"`
-	Visibility         *string            `json:"visibility"`
-	Status             *string            `json:"status"`
-	MaxConcurrentTasks *int32             `json:"max_concurrent_tasks"`
-	Model              *string            `json:"model"`
+	Visibility           *string            `json:"visibility"`
+	Status               *string            `json:"status"`
+	MaxConcurrentTasks   *int32             `json:"max_concurrent_tasks"`
+	Model                *string            `json:"model"`
+	AllowAskUserQuestion *bool              `json:"allow_ask_user_question"`
 }
 
 // canViewAgentEnv checks whether the requesting user is allowed to see the
@@ -722,6 +732,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	if req.Model != nil {
 		params.Model = pgtype.Text{String: *req.Model, Valid: true}
 	}
+	if req.AllowAskUserQuestion != nil {
+		params.AllowAskUserQuestion = pgtype.Bool{Bool: *req.AllowAskUserQuestion, Valid: true}
+	}
 
 	agent, err = h.Queries.UpdateAgent(r.Context(), params)
 	if err != nil {
@@ -782,6 +795,9 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("cancel agent tasks on archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 	} else {
 		h.TaskService.CaptureCancelledTasks(r.Context(), cancelled)
+		for _, t := range cancelled {
+			h.deletePendingQuestionsForTask(r.Context(), t.ID)
+		}
 	}
 
 	wsID := uuidToString(archived.WorkspaceID)
@@ -853,6 +869,10 @@ func (h *Handler) CancelAgentTasks(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("cancel agent tasks failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to cancel tasks")
 		return
+	}
+
+	for _, t := range cancelled {
+		h.deletePendingQuestionsForTask(r.Context(), t.ID)
 	}
 
 	slog.Info("agent tasks cancelled",

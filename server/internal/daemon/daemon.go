@@ -2048,8 +2048,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
 	}
 	var providerConfigPath string
-	if len(task.ProviderConfig) > 0 {
-		p, err := execenv.InjectProviderConfig(env.WorkDir, env.CodexHome, provider, task.ProviderConfig)
+	allowAskUser := task.Agent != nil && task.Agent.AllowAskUserQuestion && provider == "claude"
+	if len(task.ProviderConfig) > 0 || allowAskUser {
+		p, err := execenv.InjectProviderConfig(env.WorkDir, env.CodexHome, provider, execenv.ProviderConfigOptions{
+			Raw:                  task.ProviderConfig,
+			AllowAskUserQuestion: allowAskUser,
+			DaemonPort:           d.cfg.HealthPort,
+		})
 		if err != nil {
 			d.logger.Warn("execenv: inject provider config failed (non-fatal)", "error", err)
 		} else {

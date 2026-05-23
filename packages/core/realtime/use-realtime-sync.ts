@@ -28,6 +28,7 @@ import {
   onIssueLabelsChanged,
 } from "../issues/ws-updaters";
 import { onInboxNew, onInboxInvalidate, onInboxIssueStatusChanged, onInboxIssueDeleted } from "../inbox/ws-updaters";
+import { onQuestionEvent } from "../questions/ws-updaters";
 import { inboxKeys } from "../inbox/queries";
 import { notificationPreferenceOptions } from "../notification-preferences/queries";
 import { workspaceKeys, workspaceListOptions } from "../workspace/queries";
@@ -784,9 +785,25 @@ export function useRealtimeSync(
       }
     });
 
+    // Question events drive the Questions page list + sidebar badge.
+    // Payload shape: `{ question: AgentQuestion }` (see
+    // server/internal/handler/agent_question.go).
+    const handleQuestionEvent = (p: unknown) => {
+      const payload = p as { question?: { workspace_id?: string } & Record<string, unknown> };
+      const q = payload?.question;
+      const wsId = q?.workspace_id ?? getCurrentWsId();
+      if (wsId) onQuestionEvent(qc, wsId, q as never);
+    };
+    const unsubQuestionCreated = ws.on("question:created", handleQuestionEvent);
+    const unsubQuestionAnswered = ws.on("question:answered", handleQuestionEvent);
+    const unsubQuestionCancelled = ws.on("question:cancelled", handleQuestionEvent);
+
     return () => {
       unsubAny();
       unsubIssueUpdated();
+      unsubQuestionCreated();
+      unsubQuestionAnswered();
+      unsubQuestionCancelled();
       unsubIssueCreated();
       unsubIssueDeleted();
       unsubIssueLabelsChanged();

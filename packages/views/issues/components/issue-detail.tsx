@@ -52,6 +52,7 @@ import { collectThreadReplies } from "./thread-utils";
 import { AgentLiveCard } from "./agent-live-card";
 import { ExecutionLogSection } from "./execution-log-section";
 import { PullRequestList } from "./pull-request-list";
+import { PendingQuestionsPanel } from "./pending-questions-panel";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
@@ -1004,6 +1005,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         </button>
         {pullRequestsOpen && <div className="pl-2"><PullRequestList issueId={id} /></div>}
       </div>
+
+      {/* Pending agent questions — hidden when zero. */}
+      <PendingQuestionsPanel issueId={id} />
 
       {/* Details */}
       <div>
