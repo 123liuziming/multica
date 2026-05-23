@@ -344,3 +344,127 @@ func TestActivityTaskFailed(t *testing.T) {
 		t.Fatalf("expected action 'task_failed', got %q", activities[0].Action)
 	}
 }
+
+func TestActivityQuestionCreated(t *testing.T) {
+	queries := db.New(testPool)
+	bus := events.New()
+	registerActivityListeners(bus, queries)
+
+	issueID := createTestIssue(t, testWorkspaceID, testUserID)
+	t.Cleanup(func() {
+		cleanupActivities(t, issueID)
+		cleanupTestIssue(t, issueID)
+	})
+
+	bus.Publish(events.Event{
+		Type:        protocol.EventQuestionCreated,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "agent",
+		ActorID:     testUserID,
+		Payload: map[string]any{
+			"question": handler.QuestionResponse{
+				ID:          "00000000-0000-0000-0000-000000000101",
+				WorkspaceID: testWorkspaceID,
+				TaskID:      "00000000-0000-0000-0000-000000000201",
+				AgentID:     testUserID,
+				IssueID:     &issueID,
+				Header:      "Pick a path",
+				Question:    "Which implementation should I use?",
+				Status:      "pending",
+			},
+		},
+	})
+
+	activities := listActivitiesForIssue(t, queries, issueID)
+	if len(activities) != 1 {
+		t.Fatalf("expected 1 activity, got %d", len(activities))
+	}
+	if activities[0].Action != "question_created" {
+		t.Fatalf("expected action 'question_created', got %q", activities[0].Action)
+	}
+	if util.UUIDToString(activities[0].ActorID) != testUserID {
+		t.Fatalf("expected actor_id %s, got %s", testUserID, util.UUIDToString(activities[0].ActorID))
+	}
+
+	var details map[string]string
+	if err := json.Unmarshal(activities[0].Details, &details); err != nil {
+		t.Fatalf("failed to unmarshal details: %v", err)
+	}
+	if details["header"] != "Pick a path" {
+		t.Fatalf("expected header detail, got %q", details["header"])
+	}
+}
+
+func TestActivityQuestionAnswered(t *testing.T) {
+	queries := db.New(testPool)
+	bus := events.New()
+	registerActivityListeners(bus, queries)
+
+	issueID := createTestIssue(t, testWorkspaceID, testUserID)
+	t.Cleanup(func() {
+		cleanupActivities(t, issueID)
+		cleanupTestIssue(t, issueID)
+	})
+
+	bus.Publish(events.Event{
+		Type:        protocol.EventQuestionAnswered,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     testUserID,
+		Payload: map[string]any{
+			"question": handler.QuestionResponse{
+				ID:          "00000000-0000-0000-0000-000000000102",
+				WorkspaceID: testWorkspaceID,
+				TaskID:      "00000000-0000-0000-0000-000000000202",
+				AgentID:     testUserID,
+				IssueID:     &issueID,
+				Header:      "Confirm rollout",
+				Question:    "Proceed?",
+				Status:      "answered",
+			},
+		},
+	})
+
+	activities := listActivitiesForIssue(t, queries, issueID)
+	if len(activities) != 1 {
+		t.Fatalf("expected 1 activity, got %d", len(activities))
+	}
+	if activities[0].Action != "question_answered" {
+		t.Fatalf("expected action 'question_answered', got %q", activities[0].Action)
+	}
+}
+
+func TestActivityQuestionWithoutIssueDoesNotRecord(t *testing.T) {
+	queries := db.New(testPool)
+	bus := events.New()
+	registerActivityListeners(bus, queries)
+
+	issueID := createTestIssue(t, testWorkspaceID, testUserID)
+	t.Cleanup(func() {
+		cleanupActivities(t, issueID)
+		cleanupTestIssue(t, issueID)
+	})
+
+	bus.Publish(events.Event{
+		Type:        protocol.EventQuestionCreated,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "agent",
+		ActorID:     testUserID,
+		Payload: map[string]any{
+			"question": handler.QuestionResponse{
+				ID:          "00000000-0000-0000-0000-000000000103",
+				WorkspaceID: testWorkspaceID,
+				TaskID:      "00000000-0000-0000-0000-000000000203",
+				AgentID:     testUserID,
+				Header:      "Standalone",
+				Question:    "No issue attached?",
+				Status:      "pending",
+			},
+		},
+	})
+
+	activities := listActivitiesForIssue(t, queries, issueID)
+	if len(activities) != 0 {
+		t.Fatalf("expected 0 activities for standalone question, got %d", len(activities))
+	}
+}

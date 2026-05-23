@@ -1,26 +1,47 @@
 "use client";
 
 import { useState } from "react";
-import { Check, CheckCircle2, Clock, HelpCircle, XCircle } from "lucide-react";
-import type { AgentQuestion } from "@multica/core/types";
+import { useQuery } from "@tanstack/react-query";
+import {
+  ArrowUpRight,
+  Check,
+  CheckCircle2,
+  Clock,
+  HelpCircle,
+  Loader2,
+  ScrollText,
+  XCircle,
+} from "lucide-react";
+import type { AgentQuestion, AgentTask } from "@multica/core/types";
+import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspacePaths } from "@multica/core/paths";
+import { agentTasksOptions } from "@multica/core/agents";
 import { useAnswerQuestion } from "@multica/core/questions";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { TranscriptButton } from "../../common/task-transcript/transcript-button";
+import { AppLink } from "../../navigation";
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@multica/ui/components/ui/radio-group";
 import { Textarea } from "@multica/ui/components/ui/textarea";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@multica/ui/components/ui/tooltip";
 import { cn } from "@multica/ui/lib/utils";
 import { toast } from "sonner";
 import { useT } from "../../i18n";
 
 interface QuestionCardProps {
   question: AgentQuestion;
+  showIssueLink?: boolean;
 }
 
 const CUSTOM_RADIO_VALUE = "__custom__";
 
-export function QuestionCard({ question }: QuestionCardProps) {
+export function QuestionCard({ question, showIssueLink = false }: QuestionCardProps) {
   const { t } = useT("questions");
   const isPending = question.status === "pending";
   const isMulti = question.multi_select;
@@ -77,18 +98,21 @@ export function QuestionCard({ question }: QuestionCardProps) {
       <div className="mb-2 flex items-start gap-2">
         <StatusIcon status={question.status} />
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold">
-            <span
-              className={cn(
-                "mr-1.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider",
-                isMulti
-                  ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
-                  : "bg-sky-500/15 text-sky-700 dark:text-sky-400",
-              )}
-            >
-              [{tag}]
-            </span>
-            {question.header}
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1 text-sm font-semibold">
+              <span
+                className={cn(
+                  "mr-1.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider",
+                  isMulti
+                    ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                    : "bg-sky-500/15 text-sky-700 dark:text-sky-400",
+                )}
+              >
+                [{tag}]
+              </span>
+              {question.header}
+            </div>
+            <QuestionActions question={question} showIssueLink={showIssueLink} />
           </div>
           <div className="mt-0.5 whitespace-pre-wrap text-sm text-foreground">
             {question.question}
@@ -147,6 +171,83 @@ export function QuestionCard({ question }: QuestionCardProps) {
         </>
       )}
     </div>
+  );
+}
+
+function QuestionActions({
+  question,
+  showIssueLink,
+}: {
+  question: AgentQuestion;
+  showIssueLink: boolean;
+}) {
+  const { t } = useT("questions");
+  const wsPaths = useWorkspacePaths();
+
+  return (
+    <div className="flex shrink-0 items-center gap-0.5">
+      {showIssueLink && question.issue_id && (
+        <Tooltip>
+          <TooltipTrigger
+            render={<AppLink href={wsPaths.issueDetail(question.issue_id)} />}
+            aria-label={t(($) => $.open_issue_button)}
+            className="flex items-center justify-center rounded p-1 text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+          >
+            <ArrowUpRight className="h-3.5 w-3.5" />
+          </TooltipTrigger>
+          <TooltipContent>{t(($) => $.open_issue_button)}</TooltipContent>
+        </Tooltip>
+      )}
+      <QuestionTaskButton question={question} />
+    </div>
+  );
+}
+
+function QuestionTaskButton({ question }: { question: AgentQuestion }) {
+  const { t } = useT("questions");
+  const wsId = useWorkspaceId();
+  const { getAgentName } = useActorName();
+  const { data: tasks = [], isLoading } = useQuery({
+    ...agentTasksOptions(wsId, question.agent_id),
+    enabled: !!wsId && !!question.agent_id,
+  });
+  const task = (tasks as AgentTask[]).find((item) => item.id === question.task_id);
+
+  if (task) {
+    return (
+      <TranscriptButton
+        task={task}
+        agentName={getAgentName(question.agent_id)}
+        isLive={task.status === "dispatched" || task.status === "running"}
+        title={t(($) => $.task_transcript_button)}
+      />
+    );
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<button type="button" />}
+        disabled
+        aria-label={
+          isLoading
+            ? t(($) => $.task_transcript_loading)
+            : t(($) => $.task_transcript_unavailable)
+        }
+        className="flex items-center justify-center rounded p-1 text-muted-foreground opacity-60"
+      >
+        {isLoading ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <ScrollText className="h-3.5 w-3.5" />
+        )}
+      </TooltipTrigger>
+      <TooltipContent>
+        {isLoading
+          ? t(($) => $.task_transcript_loading)
+          : t(($) => $.task_transcript_unavailable)}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

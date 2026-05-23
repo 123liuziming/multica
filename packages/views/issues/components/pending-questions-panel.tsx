@@ -19,18 +19,12 @@ interface Props {
  * Sidebar surface on the Issue detail page. Shows every AskUserQuestion
  * record tied to this issue (pending + resolved), with agent avatar and
  * type tag so the reader can scan who asked what without leaving the page.
- *
- * Hidden entirely when this issue has never had a question — the section
- * adds no signal otherwise.
  */
 export function PendingQuestionsPanel({ issueId }: Props) {
   const { t } = useT("questions");
-  const wsPaths = useWorkspacePaths();
   const allQuery = useQuery(issueQuestionsOptions(issueId, "all"));
   const all: AgentQuestion[] = allQuery.data ?? [];
   const [open, setOpen] = useState(true);
-
-  if (all.length === 0) return null;
 
   const pending = all.filter((q) => q.status === "pending");
   const resolved = all.filter((q) => q.status !== "pending");
@@ -42,8 +36,6 @@ export function PendingQuestionsPanel({ issueId }: Props) {
     if (aPending !== bPending) return aPending ? -1 : 1;
     return b.created_at.localeCompare(a.created_at);
   });
-
-  const allHref = `${wsPaths.questions()}?issueId=${encodeURIComponent(issueId)}`;
 
   return (
     <div>
@@ -73,15 +65,17 @@ export function PendingQuestionsPanel({ issueId }: Props) {
       </button>
       {open && (
         <div className="space-y-1.5 pl-2">
-          {ordered.map((q) => (
-            <QuestionRow key={q.id} question={q} issueId={issueId} />
-          ))}
-          <AppLink
-            href={allHref}
-            className="block pt-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            {t(($) => $.issue_panel_view_all)} →
-          </AppLink>
+          {ordered.length === 0 ? (
+            <p className="px-2 py-1 text-xs text-muted-foreground">
+              {allQuery.isLoading
+                ? t(($) => $.issue_panel_loading)
+                : t(($) => $.issue_panel_empty)}
+            </p>
+          ) : (
+            ordered.map((q) => (
+              <QuestionRow key={q.id} question={q} issueId={issueId} />
+            ))
+          )}
         </div>
       )}
     </div>

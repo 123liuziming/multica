@@ -273,6 +273,58 @@ func (q *Queries) DeletePendingQuestionsForTask(ctx context.Context, taskID pgty
 	return items, nil
 }
 
+const findMatchingIssueQuestion = `-- name: FindMatchingIssueQuestion :one
+SELECT id, workspace_id, task_id, agent_id, issue_id, header, question, options, multi_select, status, answer_option_indices, answer_custom_text, answered_by_user_id, answered_at, created_at FROM agent_question
+WHERE workspace_id = $1
+  AND issue_id = $2
+  AND header = $3
+  AND question = $4
+  AND options = $5::jsonb
+  AND multi_select = $6
+  AND status IN ('pending', 'answered')
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type FindMatchingIssueQuestionParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+	Header      string      `json:"header"`
+	Question    string      `json:"question"`
+	Options     []byte      `json:"options"`
+	MultiSelect bool        `json:"multi_select"`
+}
+
+func (q *Queries) FindMatchingIssueQuestion(ctx context.Context, arg FindMatchingIssueQuestionParams) (AgentQuestion, error) {
+	row := q.db.QueryRow(ctx, findMatchingIssueQuestion,
+		arg.WorkspaceID,
+		arg.IssueID,
+		arg.Header,
+		arg.Question,
+		arg.Options,
+		arg.MultiSelect,
+	)
+	var i AgentQuestion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.TaskID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Header,
+		&i.Question,
+		&i.Options,
+		&i.MultiSelect,
+		&i.Status,
+		&i.AnswerOptionIndices,
+		&i.AnswerCustomText,
+		&i.AnsweredByUserID,
+		&i.AnsweredAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getAgentQuestion = `-- name: GetAgentQuestion :one
 SELECT id, workspace_id, task_id, agent_id, issue_id, header, question, options, multi_select, status, answer_option_indices, answer_custom_text, answered_by_user_id, answered_at, created_at FROM agent_question
 WHERE id = $1

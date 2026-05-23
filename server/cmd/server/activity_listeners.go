@@ -220,6 +220,16 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 	bus.Subscribe(protocol.EventTaskFailed, func(e events.Event) {
 		handleTaskActivity(ctx, bus, queries, e, "task_failed")
 	})
+
+	// question:created / question:answered — record issue-linked AskUserQuestion
+	// activity. Standalone agent questions intentionally stay out of issue
+	// timelines because there is no issue surface to attach them to.
+	bus.Subscribe(protocol.EventQuestionCreated, func(e events.Event) {
+		handleQuestionActivity(ctx, bus, queries, e, "question_created")
+	})
+	bus.Subscribe(protocol.EventQuestionAnswered, func(e events.Event) {
+		handleQuestionActivity(ctx, bus, queries, e, "question_answered")
+	})
 }
 
 // handleTaskActivity records an activity for task:completed or task:failed events.
@@ -253,6 +263,40 @@ func handleTaskActivity(ctx context.Context, bus *events.Bus, queries *db.Querie
 	if err != nil {
 		slog.Error("activity: failed to record task activity",
 			"issue_id", issueID, "action", action, "error", err)
+		return
+	}
+
+	publishActivityEvent(bus, e, activity)
+}
+
+func handleQuestionActivity(ctx context.Context, bus *events.Bus, queries *db.Queries, e events.Event, action string) {
+	payload, ok := e.Payload.(map[string]any)
+	if !ok {
+		return
+	}
+	question, ok := payload["question"].(handler.QuestionResponse)
+	if !ok || question.IssueID == nil || *question.IssueID == "" {
+		return
+	}
+
+	details, _ := json.Marshal(map[string]string{
+		"question_id": question.ID,
+		"task_id":     question.TaskID,
+		"agent_id":    question.AgentID,
+		"header":      question.Header,
+		"question":    question.Question,
+	})
+	activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
+		WorkspaceID: parseUUID(question.WorkspaceID),
+		IssueID:     parseUUID(*question.IssueID),
+		ActorType:   util.StrToText(e.ActorType),
+		ActorID:     optionalUUID(e.ActorID),
+		Action:      action,
+		Details:     details,
+	})
+	if err != nil {
+		slog.Error("activity: failed to record question activity",
+			"issue_id", *question.IssueID, "question_id", question.ID, "action", action, "error", err)
 		return
 	}
 

@@ -5,6 +5,18 @@ INSERT INTO agent_question (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
+-- name: FindMatchingIssueQuestion :one
+SELECT * FROM agent_question
+WHERE workspace_id = $1
+  AND issue_id = $2
+  AND header = $3
+  AND question = $4
+  AND options = @options::jsonb
+  AND multi_select = @multi_select
+  AND status IN ('pending', 'answered')
+ORDER BY created_at DESC
+LIMIT 1;
+
 -- name: GetAgentQuestion :one
 SELECT * FROM agent_question
 WHERE id = $1;

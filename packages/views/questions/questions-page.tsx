@@ -66,10 +66,9 @@ function buildIssueGroups(qs: AgentQuestion[]): IssueGroup[] {
   });
 }
 
-function buildOrphanAgentGroups(qs: AgentQuestion[]): AgentGroup[] {
+function buildAgentGroups(qs: AgentQuestion[]): AgentGroup[] {
   const map = new Map<string, AgentGroup>();
   for (const q of qs) {
-    if (q.issue_id) continue;
     let g = map.get(q.agent_id);
     if (!g) {
       g = { agentId: q.agent_id, questions: [], pendingCount: 0, resolvedCount: 0 };
@@ -79,7 +78,12 @@ function buildOrphanAgentGroups(qs: AgentQuestion[]): AgentGroup[] {
     if (q.status === "pending") g.pendingCount += 1;
     else g.resolvedCount += 1;
   }
-  return Array.from(map.values()).sort((a, b) => b.pendingCount - a.pendingCount);
+  return Array.from(map.values()).sort((a, b) => {
+    if (a.pendingCount !== b.pendingCount) return b.pendingCount - a.pendingCount;
+    const aLatest = a.questions[0]?.created_at ?? "";
+    const bLatest = b.questions[0]?.created_at ?? "";
+    return bLatest.localeCompare(aLatest);
+  });
 }
 
 export function QuestionsPage() {
@@ -97,10 +101,15 @@ export function QuestionsPage() {
   useQuery(questionCountsOptions(wsId));
 
   const issueGroups = useMemo(() => buildIssueGroups(allQuestions), [allQuestions]);
-  const agentGroups = useMemo(
-    () => buildOrphanAgentGroups(allQuestions),
-    [allQuestions],
+  const pendingIssueGroups = useMemo(
+    () => issueGroups.filter((g) => g.resolvedCount !== g.questions.length),
+    [issueGroups],
   );
+  const answeredIssueGroups = useMemo(
+    () => issueGroups.filter((g) => g.resolvedCount === g.questions.length),
+    [issueGroups],
+  );
+  const agentGroups = useMemo(() => buildAgentGroups(allQuestions), [allQuestions]);
 
   const urlIssueId = searchParams.get("issueId") ?? "";
   const urlAgentId = searchParams.get("agentId") ?? "";
@@ -112,10 +121,11 @@ export function QuestionsPage() {
     if (urlAgentId && agentGroups.some((g) => g.agentId === urlAgentId)) {
       return { kind: "agent", agentId: urlAgentId };
     }
-    if (issueGroups[0]) return { kind: "issue", issueId: issueGroups[0].issueId };
+    if (pendingIssueGroups[0]) return { kind: "issue", issueId: pendingIssueGroups[0].issueId };
     if (agentGroups[0]) return { kind: "agent", agentId: agentGroups[0].agentId };
+    if (answeredIssueGroups[0]) return { kind: "issue", issueId: answeredIssueGroups[0].issueId };
     return null;
-  }, [urlIssueId, urlAgentId, issueGroups, agentGroups]);
+  }, [urlIssueId, urlAgentId, issueGroups, pendingIssueGroups, answeredIssueGroups, agentGroups]);
 
   const select = (next: Selection) => {
     const params = new URLSearchParams();
@@ -158,8 +168,9 @@ export function QuestionsPage() {
           >
             <ResizablePanel id="list" defaultSize={320} minSize={240} maxSize={480} groupResizeBehavior="preserve-pixel-size">
               <LeftSidebar
-                issueGroups={issueGroups}
+                pendingIssueGroups={pendingIssueGroups}
                 agentGroups={agentGroups}
+                answeredIssueGroups={answeredIssueGroups}
                 selection={selection}
                 onSelect={select}
               />
@@ -176,37 +187,40 @@ export function QuestionsPage() {
 }
 
 function LeftSidebar({
-  issueGroups,
+  pendingIssueGroups,
   agentGroups,
+  answeredIssueGroups,
   selection,
   onSelect,
 }: {
-  issueGroups: IssueGroup[];
+  pendingIssueGroups: IssueGroup[];
   agentGroups: AgentGroup[];
+  answeredIssueGroups: IssueGroup[];
   selection: Selection;
   onSelect: (s: Selection) => void;
 }) {
   const { t } = useT("questions");
-  const [issuesOpen, setIssuesOpen] = useState(true);
+  const [pendingIssuesOpen, setPendingIssuesOpen] = useState(true);
   const [agentsOpen, setAgentsOpen] = useState(false);
+  const [answeredIssuesOpen, setAnsweredIssuesOpen] = useState(false);
 
   return (
     <div className="flex h-full flex-col border-r">
       <div className="flex-1 min-h-0 overflow-y-auto py-2">
         <SectionHeader
-          label={t(($) => $.left_section_issue_questions)}
-          count={issueGroups.length}
-          open={issuesOpen}
-          onToggle={() => setIssuesOpen((v) => !v)}
+          label={t(($) => $.left_section_pending_issue_questions)}
+          count={pendingIssueGroups.length}
+          open={pendingIssuesOpen}
+          onToggle={() => setPendingIssuesOpen((v) => !v)}
         />
-        {issuesOpen && (
+        {pendingIssuesOpen && (
           <div className="pb-3">
-            {issueGroups.length === 0 ? (
+            {pendingIssueGroups.length === 0 ? (
               <p className="px-4 py-3 text-xs text-muted-foreground">
                 {t(($) => $.left_no_issue_questions)}
               </p>
             ) : (
-              issueGroups.map((g) => (
+              pendingIssueGroups.map((g) => (
                 <IssueRow
                   key={g.issueId}
                   group={g}
@@ -237,6 +251,31 @@ function LeftSidebar({
                   group={g}
                   selected={selection?.kind === "agent" && selection.agentId === g.agentId}
                   onSelect={() => onSelect({ kind: "agent", agentId: g.agentId })}
+                />
+              ))
+            )}
+          </div>
+        )}
+
+        <SectionHeader
+          label={t(($) => $.left_section_answered_issue_questions)}
+          count={answeredIssueGroups.length}
+          open={answeredIssuesOpen}
+          onToggle={() => setAnsweredIssuesOpen((v) => !v)}
+        />
+        {answeredIssuesOpen && (
+          <div className="pb-3">
+            {answeredIssueGroups.length === 0 ? (
+              <p className="px-4 py-3 text-xs text-muted-foreground">
+                {t(($) => $.left_no_answered_issue_questions)}
+              </p>
+            ) : (
+              answeredIssueGroups.map((g) => (
+                <IssueRow
+                  key={g.issueId}
+                  group={g}
+                  selected={selection?.kind === "issue" && selection.issueId === g.issueId}
+                  onSelect={() => onSelect({ kind: "issue", issueId: g.issueId })}
                 />
               ))
             )}
@@ -432,7 +471,7 @@ function IssueDetailPanel({ wsId, group }: { wsId: string; group: IssueGroup }) 
           </span>
         </AppLink>
       </div>
-      <QuestionsList pending={pending} resolved={resolved} />
+      <QuestionsList pending={pending} resolved={resolved} resetKey={group.issueId} />
     </div>
   );
 }
@@ -476,7 +515,12 @@ function AgentDetailPanel({ wsId, group }: { wsId: string; group: AgentGroup }) 
           </span>
         </AppLink>
       </div>
-      <QuestionsList pending={pending} resolved={resolved} />
+      <QuestionsList
+        pending={pending}
+        resolved={resolved}
+        resetKey={group.agentId}
+        showIssueLink
+      />
     </div>
   );
 }
@@ -484,12 +528,22 @@ function AgentDetailPanel({ wsId, group }: { wsId: string; group: AgentGroup }) 
 function QuestionsList({
   pending,
   resolved,
+  resetKey,
+  showIssueLink = false,
 }: {
   pending: AgentQuestion[];
   resolved: AgentQuestion[];
+  resetKey: string;
+  showIssueLink?: boolean;
 }) {
   const { t } = useT("questions");
-  const [showResolved, setShowResolved] = useState(false);
+  const defaultShowResolved = pending.length === 0 && resolved.length > 0;
+  const [showResolved, setShowResolved] = useState(defaultShowResolved);
+
+  useEffect(() => {
+    setShowResolved(defaultShowResolved);
+  }, [defaultShowResolved, resetKey]);
+
   return (
     <div className="flex-1 min-h-0 overflow-y-auto">
       <div className="space-y-3 p-6">
@@ -501,7 +555,9 @@ function QuestionsList({
             {t(($) => $.pending_section_empty)}
           </p>
         ) : (
-          pending.map((q) => <QuestionCard key={q.id} question={q} />)
+          pending.map((q) => (
+            <QuestionCard key={q.id} question={q} showIssueLink={showIssueLink} />
+          ))
         )}
         <button
           type="button"
@@ -521,7 +577,9 @@ function QuestionsList({
           </p>
         )}
         {showResolved &&
-          resolved.map((q) => <QuestionCard key={q.id} question={q} />)}
+          resolved.map((q) => (
+            <QuestionCard key={q.id} question={q} showIssueLink={showIssueLink} />
+          ))}
       </div>
     </div>
   );

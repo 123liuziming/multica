@@ -223,6 +223,14 @@ function formatActivity(
       });
     case "description_updated":
       return t(($) => $.activity.description_updated);
+    case "question_created":
+      return t(($) => $.activity.question_created, {
+        title: details.header || details.question || "?",
+      });
+    case "question_answered":
+      return t(($) => $.activity.question_answered, {
+        title: details.header || details.question || "?",
+      });
     case "task_completed":
       return t(($) => $.activity.task_completed, { count: entry.coalesced_count ?? 1 });
     case "task_failed":
@@ -636,10 +644,15 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     // Coalesce consecutive activities from the same actor + action.
     // - task_completed / task_failed: no time limit (these repeat across runs)
     // - all other actions: within a 2-minute window
-    // - squad_leader_evaluated: never coalesce; outcome/reason are audit data
+    // - squad_leader_evaluated/question_*: never coalesce; details identify
+    //   the specific audit event.
     const COALESCE_MS = 2 * 60 * 1000;
     const NO_TIME_LIMIT_ACTIONS = new Set(["task_completed", "task_failed"]);
-    const NEVER_COALESCE_ACTIONS = new Set(["squad_leader_evaluated"]);
+    const NEVER_COALESCE_ACTIONS = new Set([
+      "squad_leader_evaluated",
+      "question_created",
+      "question_answered",
+    ]);
     const coalesced: TimelineEntry[] = [];
     for (const entry of topLevel) {
       if (entry.type === "activity") {
@@ -1006,7 +1019,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         {pullRequestsOpen && <div className="pl-2"><PullRequestList issueId={id} /></div>}
       </div>
 
-      {/* Pending agent questions — hidden when zero. */}
+      {/* Issue-linked questions. The panel stays visible even when empty. */}
       <PendingQuestionsPanel issueId={id} />
 
       {/* Details */}

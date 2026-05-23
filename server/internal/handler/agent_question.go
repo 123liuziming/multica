@@ -195,7 +195,7 @@ func (h *Handler) GetQuestionPendingCounts(w http.ResponseWriter, r *http.Reques
 		Pending int32  `json:"pending"`
 	}
 	out := struct {
-		Total   int32        `json:"total"`
+		Total    int32        `json:"total"`
 		PerIssue []issueCount `json:"per_issue"`
 	}{Total: int32(total), PerIssue: make([]issueCount, 0, len(perIssue))}
 	for _, row := range perIssue {
@@ -446,8 +446,9 @@ type CreateTaskQuestionsRequest struct {
 }
 
 // CreateTaskQuestions backs `POST /api/daemon/tasks/{taskId}/questions`.
-// Persists one row per question, broadcasts question:created, and returns
-// the created records so the daemon knows which IDs to long-poll for.
+// Reuses an identical pending/answered issue question when one already exists,
+// otherwise persists a new row, broadcasts question:created, and returns the
+// records so the daemon knows which IDs to long-poll for.
 //
 // Workspace scoping is enforced via requireDaemonTaskAccess — the caller's
 // daemon/PAT must own the task's workspace. We do NOT re-check
@@ -483,6 +484,7 @@ func (h *Handler) CreateTaskQuestions(w http.ResponseWriter, r *http.Request) {
 
 	workspaceID := uuidToString(agent.WorkspaceID)
 	created := make([]QuestionResponse, 0, len(req.Questions))
+	createdAny := false
 	for _, q := range req.Questions {
 		header := q.Header
 		if header == "" {
@@ -491,6 +493,25 @@ func (h *Handler) CreateTaskQuestions(w http.ResponseWriter, r *http.Request) {
 		optsBytes, err := json.Marshal(q.Options)
 		if err != nil {
 			optsBytes = []byte("[]")
+		}
+		if task.IssueID.Valid {
+			existing, err := h.Queries.FindMatchingIssueQuestion(r.Context(), db.FindMatchingIssueQuestionParams{
+				WorkspaceID: agent.WorkspaceID,
+				IssueID:     task.IssueID,
+				Header:      header,
+				Question:    q.Question,
+				Options:     optsBytes,
+				MultiSelect: q.MultiSelect,
+			})
+			if err == nil {
+				created = append(created, questionToResponse(existing))
+				continue
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				slog.Warn("find matching agent_question failed", "task_id", taskIDStr, "error", err)
+				writeError(w, http.StatusInternalServerError, "failed to find matching question")
+				return
+			}
 		}
 		row, err := h.Queries.CreateAgentQuestion(r.Context(), db.CreateAgentQuestionParams{
 			WorkspaceID: agent.WorkspaceID,
@@ -507,6 +528,7 @@ func (h *Handler) CreateTaskQuestions(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to create question")
 			return
 		}
+		createdAny = true
 		resp := questionToResponse(row)
 		created = append(created, resp)
 
@@ -514,7 +536,11 @@ func (h *Handler) CreateTaskQuestions(w http.ResponseWriter, r *http.Request) {
 			"question": resp,
 		})
 	}
-	writeJSON(w, http.StatusCreated, created)
+	status := http.StatusOK
+	if createdAny {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, created)
 }
 
 // WaitForQuestion backs `GET /api/daemon/questions/{id}/wait`. Long-polls
@@ -573,4 +599,3 @@ func (h *Handler) WaitForQuestion(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
-
