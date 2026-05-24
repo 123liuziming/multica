@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 )
 
+const askUserHookTimeoutSeconds = 3 * 24 * 60 * 60
+
 // askUserHookScript is the bash hook installed at .claude/hooks/ask-user-question.sh
 // when an agent has allow_ask_user_question enabled. It runs as a Claude Code
 // PreToolUse hook matching the AskUserQuestion tool.
@@ -51,7 +53,7 @@ RESP=$(curl -sS -X POST "http://127.0.0.1:${PORT}/question/ask" \
   -H "Content-Type: application/json" \
   -H "X-Multica-Task-Id: ${TASK_ID}" \
   --data "$TOOL_INPUT" \
-  --max-time 86400 || echo "")
+  --max-time 259200 || echo "")
 
 if [ -z "$RESP" ]; then
   jq -n '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:"multica: failed to reach daemon to forward AskUserQuestion"}}'
@@ -104,6 +106,7 @@ func mergeAskUserHook(settings map[string]any, workDir string, daemonPort int) e
 			map[string]any{
 				"type":    "command",
 				"command": scriptPath,
+				"timeout": askUserHookTimeoutSeconds,
 			},
 		},
 	}

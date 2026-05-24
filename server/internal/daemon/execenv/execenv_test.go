@@ -2615,6 +2615,70 @@ func TestReadGCMeta_NoFile(t *testing.T) {
 	}
 }
 
+func TestInjectProviderConfigAskUserQuestionHookHasThreeDayTimeout(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	settingsPath, err := InjectProviderConfig(dir, "", "claude", ProviderConfigOptions{
+		AllowAskUserQuestion: true,
+		DaemonPort:           19514,
+	})
+	if err != nil {
+		t.Fatalf("InjectProviderConfig failed: %v", err)
+	}
+	if settingsPath == "" {
+		t.Fatal("expected settings path")
+	}
+
+	raw, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		t.Fatalf("settings json: %v\n%s", err, string(raw))
+	}
+
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings hooks missing or wrong type: %#v", settings["hooks"])
+	}
+	pre, ok := hooks["PreToolUse"].([]any)
+	if !ok || len(pre) != 1 {
+		t.Fatalf("PreToolUse hooks = %#v", hooks["PreToolUse"])
+	}
+	entry, ok := pre[0].(map[string]any)
+	if !ok {
+		t.Fatalf("PreToolUse entry = %#v", pre[0])
+	}
+	if got := entry["matcher"]; got != "AskUserQuestion" {
+		t.Fatalf("matcher = %#v, want AskUserQuestion", got)
+	}
+	commands, ok := entry["hooks"].([]any)
+	if !ok || len(commands) != 1 {
+		t.Fatalf("entry hooks = %#v", entry["hooks"])
+	}
+	command, ok := commands[0].(map[string]any)
+	if !ok {
+		t.Fatalf("command hook = %#v", commands[0])
+	}
+	if got := command["timeout"]; got != float64(askUserHookTimeoutSeconds) {
+		t.Fatalf("hook timeout = %#v, want %d", got, askUserHookTimeoutSeconds)
+	}
+
+	scriptPath, ok := command["command"].(string)
+	if !ok || scriptPath == "" {
+		t.Fatalf("hook command = %#v", command["command"])
+	}
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read hook script: %v", err)
+	}
+	if !strings.Contains(string(script), "--max-time 259200") {
+		t.Fatalf("hook script missing 3-day curl timeout:\n%s", string(script))
+	}
+}
+
 // TestInjectRuntimeConfigMentionLoopHardening locks in the mention-loop
 // instructions (see MUL-1323 / GH#1576). Two agents were stuck in an infinite
 // @mention loop because the harness told them mentions were "actions" but did

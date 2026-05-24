@@ -50,6 +50,8 @@ type askUserResponse struct {
 	Error     string `json:"error,omitempty"`
 }
 
+const askUserQuestionWaitTimeout = 3 * 24 * time.Hour
+
 // registerQuestionRoutes wires `POST /question/ask` into the daemon's local
 // health mux. The hook script (see execenv/ask_user_hook.go) is the only
 // caller.
@@ -91,9 +93,9 @@ func (d *Daemon) handleQuestionAsk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Step 2: wait for every question to terminate (answered/cancelled).
-	// 24h hard cap mirrors the hook script's curl timeout; in practice the
+	// The hard cap mirrors the hook script's curl timeout; in practice the
 	// task is usually answered or cancelled within minutes.
-	waitCtx, cancel := context.WithTimeout(r.Context(), 24*time.Hour)
+	waitCtx, cancel := context.WithTimeout(r.Context(), askUserQuestionWaitTimeout)
 	defer cancel()
 	answers := make([]createdQuestion, len(created))
 	for i, q := range created {
