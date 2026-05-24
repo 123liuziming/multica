@@ -349,11 +349,17 @@ func (h *Handler) AnswerQuestion(w http.ResponseWriter, r *http.Request) {
 
 	resp := questionToResponse(answered)
 	actorType, actorID := h.resolveActor(r, userID, uuidToString(answered.WorkspaceID))
-	h.publish(protocol.EventQuestionAnswered, uuidToString(answered.WorkspaceID), actorType, actorID, map[string]any{
+	workspaceID := uuidToString(answered.WorkspaceID)
+	payload := map[string]any{
 		"question": resp,
-	})
+	}
 
 	writeJSON(w, http.StatusOK, resp)
+
+	// Card callbacks should only wait for the database state transition and
+	// daemon wake-up. Activity, realtime, and changelog listeners are best
+	// effort side effects and may involve slower I/O.
+	go h.publish(protocol.EventQuestionAnswered, workspaceID, actorType, actorID, payload)
 }
 
 func (h *Handler) loadQuestionForUser(w http.ResponseWriter, r *http.Request, qid string) (db.AgentQuestion, bool) {
