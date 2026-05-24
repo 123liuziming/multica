@@ -47,6 +47,7 @@ type TaskContextForEnv struct {
 	AgentID                 string // unique ID of the dispatched agent
 	AgentName               string
 	AgentInstructions       string // agent identity/persona instructions, injected into CLAUDE.md
+	AllowAskUserQuestion    bool   // true only when this task should expose Claude Code AskUserQuestion
 	AgentSkills             []SkillContextForEnv
 	Repos                   []RepoContextForEnv     // workspace repos available for checkout
 	ProjectID               string                  // issue's project, when present

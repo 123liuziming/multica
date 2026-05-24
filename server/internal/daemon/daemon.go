@@ -1973,6 +1973,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		skills = task.Agent.Skills
 		instructions = task.Agent.Instructions
 	}
+	allowAskUser := task.Agent != nil && task.Agent.AllowAskUserQuestion && provider == "claude"
 
 	// Prepare isolated execution environment.
 	// Repos are passed as metadata only — the agent checks them out on demand
@@ -1983,6 +1984,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		AgentID:                 agentID,
 		AgentName:               agentName,
 		AgentInstructions:       instructions,
+		AllowAskUserQuestion:    allowAskUser,
 		AgentSkills:             convertSkillsForEnv(skills),
 		Repos:                   convertReposForEnv(task.Repos),
 		ProjectID:               task.ProjectID,
@@ -2048,7 +2050,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
 	}
 	var providerConfigPath string
-	allowAskUser := task.Agent != nil && task.Agent.AllowAskUserQuestion && provider == "claude"
 	if len(task.ProviderConfig) > 0 || allowAskUser {
 		p, err := execenv.InjectProviderConfig(env.WorkDir, env.CodexHome, provider, execenv.ProviderConfigOptions{
 			Raw:                  task.ProviderConfig,

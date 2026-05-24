@@ -1010,6 +1010,65 @@ func TestInjectRuntimeConfigRequiresExplicitCommentPost(t *testing.T) {
 	}
 }
 
+func TestInjectRuntimeConfigAskUserQuestionGuidanceIsClaudeOnly(t *testing.T) {
+	t.Parallel()
+
+	readConfig := func(t *testing.T, provider string, ctx TaskContextForEnv) string {
+		t.Helper()
+		dir := t.TempDir()
+		if _, err := InjectRuntimeConfig(dir, provider, ctx); err != nil {
+			t.Fatalf("InjectRuntimeConfig failed: %v", err)
+		}
+		file := "AGENTS.md"
+		if provider == "claude" {
+			file = "CLAUDE.md"
+		}
+		data, err := os.ReadFile(filepath.Join(dir, file))
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		return string(data)
+	}
+
+	baseCtx := TaskContextForEnv{IssueID: "issue-1"}
+	for _, tc := range []struct {
+		name     string
+		provider string
+		ctx      TaskContextForEnv
+	}{
+		{"claude disabled", "claude", baseCtx},
+		{"codex enabled flag ignored", "codex", TaskContextForEnv{IssueID: "issue-1", AllowAskUserQuestion: true}},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := readConfig(t, tc.provider, tc.ctx)
+			for _, forbidden := range []string{
+				"## Asking the User",
+				"The user only sees `AskUserQuestion` prompts and issue comments",
+			} {
+				if strings.Contains(s, forbidden) {
+					t.Fatalf("%s: unexpected AskUserQuestion guidance %q\n---\n%s", tc.name, forbidden, s)
+				}
+			}
+		})
+	}
+
+	enabled := readConfig(t, "claude", TaskContextForEnv{IssueID: "issue-1", AllowAskUserQuestion: true})
+	for _, want := range []string{
+		"## Asking the User",
+		"Use `AskUserQuestion` when all of these are true",
+		"Batch related blockers into one `AskUserQuestion` call",
+		"Do NOT use `AskUserQuestion` for durable communication",
+		"final results still MUST be delivered via `multica issue comment add`",
+		"The user only sees `AskUserQuestion` prompts and issue comments",
+	} {
+		if !strings.Contains(enabled, want) {
+			t.Errorf("enabled Claude config missing %q\n---\n%s", want, enabled)
+		}
+	}
+}
+
 // TestInjectRuntimeConfigAvailableCommandsIsNeutral pins that the global
 // Available Commands section lists the three input modes neutrally for
 // every non-Codex provider on every host OS, with no "MUST pipe via stdin"

@@ -118,6 +118,15 @@ func (d *Daemon) handleQuestionAsk(w http.ResponseWriter, r *http.Request) {
 // PreToolUse hook's permissionDecisionReason.
 func formatAnswers(answers []createdQuestion) string {
 	var b strings.Builder
+	b.WriteString("The user answered the question")
+	if len(answers) > 1 {
+		b.WriteString("s")
+	}
+	b.WriteString(". Continue using the answer")
+	if len(answers) > 1 {
+		b.WriteString("s")
+	}
+	b.WriteString(" below.\n\n")
 	if len(answers) == 1 {
 		writeOne(&b, answers[0])
 		return b.String()
@@ -134,7 +143,7 @@ func formatAnswers(answers []createdQuestion) string {
 
 func writeOne(b *strings.Builder, a createdQuestion) {
 	if a.Status == "cancelled" {
-		fmt.Fprintf(b, "[cancelled] %s", a.Question)
+		fmt.Fprintf(b, "Question: %s\nStatus: cancelled by the user", a.Question)
 		return
 	}
 	var parts []string
@@ -151,10 +160,14 @@ func writeOne(b *strings.Builder, a createdQuestion) {
 	}
 	fmt.Fprintf(b, "Question: %s\n", a.Question)
 	if len(parts) > 0 {
-		fmt.Fprintf(b, "Selected: %s\n", strings.Join(parts, ", "))
+		fmt.Fprintf(b, "Answer: %s", strings.Join(parts, ", "))
+		if a.AnswerCustomText != "" {
+			fmt.Fprintf(b, "\nAdditional answer: %s", a.AnswerCustomText)
+		}
+		return
 	}
 	if a.AnswerCustomText != "" {
-		fmt.Fprintf(b, "User comment: %s", a.AnswerCustomText)
+		fmt.Fprintf(b, "Answer: %s", a.AnswerCustomText)
 	}
 }
 
@@ -165,4 +178,3 @@ func writeJSONErr(w http.ResponseWriter, status int, msg string) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(askUserResponse{Error: msg})
 }
-
