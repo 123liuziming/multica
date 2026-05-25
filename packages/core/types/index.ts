@@ -85,8 +85,9 @@ export type {
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type {
   GitHubInstallation,
-  GitHubPullRequest,
-  GitHubPullRequestState,
+  PullRequest,
+  PullRequestSource,
+  PullRequestState,
   ListGitHubInstallationsResponse,
   GitHubConnectResponse,
 } from "./github";

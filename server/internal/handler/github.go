@@ -22,6 +22,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/aone"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -38,12 +40,17 @@ type GitHubInstallationResponse struct {
 	CreatedAt        string  `json:"created_at"`
 }
 
-type GitHubPullRequestResponse struct {
+// PullRequestResponse is the source-agnostic shape returned for both
+// github and aone PRs. repo_owner/repo_name/number/pr_created_at/
+// pr_updated_at are nullable because the aone table allows them to be
+// absent (a future external-source extension would too).
+type PullRequestResponse struct {
 	ID              string  `json:"id"`
 	WorkspaceID     string  `json:"workspace_id"`
-	RepoOwner       string  `json:"repo_owner"`
-	RepoName        string  `json:"repo_name"`
-	Number          int32   `json:"number"`
+	Source          string  `json:"source"` // "github" | "aone"
+	RepoOwner       *string `json:"repo_owner"`
+	RepoName        *string `json:"repo_name"`
+	Number          *int32  `json:"number"`
 	Title           string  `json:"title"`
 	State           string  `json:"state"`
 	HtmlURL         string  `json:"html_url"`
@@ -52,8 +59,8 @@ type GitHubPullRequestResponse struct {
 	AuthorAvatarURL *string `json:"author_avatar_url"`
 	MergedAt        *string `json:"merged_at"`
 	ClosedAt        *string `json:"closed_at"`
-	PRCreatedAt     string  `json:"pr_created_at"`
-	PRUpdatedAt     string  `json:"pr_updated_at"`
+	PRCreatedAt     *string `json:"pr_created_at"`
+	PRUpdatedAt     *string `json:"pr_updated_at"`
 }
 
 type GitHubConnectResponse struct {
@@ -73,13 +80,17 @@ func githubInstallationToResponse(i db.GithubInstallation) GitHubInstallationRes
 	}
 }
 
-func githubPullRequestToResponse(p db.GithubPullRequest) GitHubPullRequestResponse {
-	return GitHubPullRequestResponse{
+func githubPullRequestToResponse(p db.GithubPullRequest) PullRequestResponse {
+	prCreated := timestampToString(p.PrCreatedAt)
+	prUpdated := timestampToString(p.PrUpdatedAt)
+	owner, repo, num := p.RepoOwner, p.RepoName, p.PrNumber
+	return PullRequestResponse{
 		ID:              uuidToString(p.ID),
 		WorkspaceID:     uuidToString(p.WorkspaceID),
-		RepoOwner:       p.RepoOwner,
-		RepoName:        p.RepoName,
-		Number:          p.PrNumber,
+		Source:          "github",
+		RepoOwner:       &owner,
+		RepoName:        &repo,
+		Number:          &num,
 		Title:           p.Title,
 		State:           p.State,
 		HtmlURL:         p.HtmlUrl,
@@ -88,8 +99,53 @@ func githubPullRequestToResponse(p db.GithubPullRequest) GitHubPullRequestRespon
 		AuthorAvatarURL: textToPtr(p.AuthorAvatarUrl),
 		MergedAt:        timestampToPtr(p.MergedAt),
 		ClosedAt:        timestampToPtr(p.ClosedAt),
-		PRCreatedAt:     timestampToString(p.PrCreatedAt),
-		PRUpdatedAt:     timestampToString(p.PrUpdatedAt),
+		PRCreatedAt:     &prCreated,
+		PRUpdatedAt:     &prUpdated,
+	}
+}
+
+func aonePullRequestToResponse(p db.AonePullRequest) PullRequestResponse {
+	return PullRequestResponse{
+		ID:              uuidToString(p.ID),
+		WorkspaceID:     uuidToString(p.WorkspaceID),
+		Source:          "aone",
+		RepoOwner:       textToPtr(p.RepoOwner),
+		RepoName:        textToPtr(p.RepoName),
+		Number:          int4ToPtr(p.PrNumber),
+		Title:           p.Title,
+		State:           p.State,
+		HtmlURL:         p.HtmlUrl,
+		Branch:          nil,
+		AuthorLogin:     textToPtr(p.AuthorLogin),
+		AuthorAvatarURL: textToPtr(p.AuthorAvatarUrl),
+		MergedAt:        timestampToPtr(p.MergedAt),
+		ClosedAt:        timestampToPtr(p.ClosedAt),
+		PRCreatedAt:     timestampToPtr(p.PrCreatedAt),
+		PRUpdatedAt:     timestampToPtr(p.PrUpdatedAt),
+	}
+}
+
+// pullRequestRowToResponse maps the UNION row produced by
+// ListPullRequestsByIssue (where repo_owner / repo_name / pr_number etc.
+// are nullable because the aone branch dominates the inferred type).
+func pullRequestRowToResponse(r db.ListPullRequestsByIssueRow) PullRequestResponse {
+	return PullRequestResponse{
+		ID:              uuidToString(r.ID),
+		WorkspaceID:     uuidToString(r.WorkspaceID),
+		Source:          r.Source,
+		RepoOwner:       textToPtr(r.RepoOwner),
+		RepoName:        textToPtr(r.RepoName),
+		Number:          int4ToPtr(r.PrNumber),
+		Title:           r.Title,
+		State:           r.State,
+		HtmlURL:         r.HtmlUrl,
+		Branch:          textToPtr(r.Branch),
+		AuthorLogin:     textToPtr(r.AuthorLogin),
+		AuthorAvatarURL: textToPtr(r.AuthorAvatarUrl),
+		MergedAt:        timestampToPtr(r.MergedAt),
+		ClosedAt:        timestampToPtr(r.ClosedAt),
+		PRCreatedAt:     timestampToPtr(r.PrCreatedAt),
+		PRUpdatedAt:     timestampToPtr(r.PrUpdatedAt),
 	}
 }
 
@@ -336,7 +392,7 @@ func (h *Handler) DeleteGitHubInstallation(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ── List PRs for an issue ───────────────────────────────────────────────────
+// ── List / Link / Unlink PRs for an issue ──────────────────────────────────
 
 func (h *Handler) ListPullRequestsForIssue(w http.ResponseWriter, r *http.Request) {
 	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
@@ -348,12 +404,225 @@ func (h *Handler) ListPullRequestsForIssue(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to list pull requests")
 		return
 	}
-	out := make([]GitHubPullRequestResponse, 0, len(rows))
+	out := make([]PullRequestResponse, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, githubPullRequestToResponse(row))
+		out = append(out, pullRequestRowToResponse(row))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"pull_requests": out})
 }
+
+// LinkPullRequestToIssue (POST /api/issues/{id}/pull-requests) attaches a
+// PR URL to an issue. The URL parser decides whether the PR lives in
+// github_pull_request or aone_pull_request and we route the upsert
+// accordingly. The user-supplied title (optional) wins over enrichment
+// which wins over the derived "owner/repo#N" hostname-style fallback.
+func (h *Handler) LinkPullRequestToIssue(w http.ResponseWriter, r *http.Request) {
+	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	userUUID, err := util.ParseUUID(userID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+
+	var body struct {
+		URL   string `json:"url"`
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	parsed, err := parsePullRequestURL(body.URL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	workspaceID := uuidToString(issue.WorkspaceID)
+	ctx := r.Context()
+	userTitle := strings.TrimSpace(body.Title)
+
+	var resp PullRequestResponse
+	var prID pgtype.UUID
+
+	switch parsed.Source {
+	case prSourceGitHub:
+		// Should never be nil for github URLs — parser populates them when it
+		// recognizes the /pull/<n> path shape — but guard so a future parser
+		// change can't crash this handler.
+		if parsed.RepoOwner == nil || parsed.RepoName == nil || parsed.Number == nil {
+			writeError(w, http.StatusBadRequest, "github url is missing repo or number")
+			return
+		}
+		title := userTitle
+		if title == "" {
+			title = parsed.DerivedTitle
+		}
+		pr, err := h.Queries.UpsertGitHubPullRequestByURL(ctx, db.UpsertGitHubPullRequestByURLParams{
+			WorkspaceID: issue.WorkspaceID,
+			RepoOwner:   *parsed.RepoOwner,
+			RepoName:    *parsed.RepoName,
+			PrNumber:    *parsed.Number,
+			Title:       title,
+			State:       "open",
+			HtmlUrl:     parsed.HTMLURL,
+		})
+		if err != nil {
+			slog.Warn("link pr: upsert github failed", "err", err)
+			writeError(w, http.StatusInternalServerError, "failed to save pull request")
+			return
+		}
+		prID = pr.ID
+		resp = githubPullRequestToResponse(pr)
+
+	case prSourceAone:
+		title := userTitle
+		state := "unknown"
+		enriched, enrichOK := h.enrichAonePullRequest(ctx, parsed)
+		if enrichOK {
+			if title == "" {
+				title = enriched.Title
+			}
+			state = enriched.State
+		}
+		if title == "" {
+			title = parsed.DerivedTitle
+		}
+
+		params := db.UpsertAonePullRequestByURLParams{
+			WorkspaceID: issue.WorkspaceID,
+			HtmlUrl:     parsed.HTMLURL,
+			Title:       title,
+			State:       state,
+			RepoOwner:   ptrToText(parsed.RepoOwner),
+			RepoName:    ptrToText(parsed.RepoName),
+			PrNumber:    ptrToInt4(parsed.Number),
+		}
+		if enrichOK {
+			params.LastEnrichedAt = pgtype.Timestamptz{Time: nowUTC(), Valid: true}
+		}
+		pr, err := h.Queries.UpsertAonePullRequestByURL(ctx, params)
+		if err != nil {
+			slog.Warn("link pr: upsert aone failed", "err", err)
+			writeError(w, http.StatusInternalServerError, "failed to save pull request")
+			return
+		}
+		prID = pr.ID
+		resp = aonePullRequestToResponse(pr)
+
+	default:
+		writeError(w, http.StatusBadRequest, "unsupported pull request source")
+		return
+	}
+
+	if err := h.Queries.LinkIssueToPullRequest(ctx, db.LinkIssueToPullRequestParams{
+		IssueID:       issue.ID,
+		PullRequestID: prID,
+		Source:        resp.Source,
+		LinkedByType:  strToText("user"),
+		LinkedByID:    pgtype.UUID{Bytes: userUUID.Bytes, Valid: userUUID.Valid},
+	}); err != nil {
+		slog.Warn("link pr: link failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to link pull request")
+		return
+	}
+
+	h.publish(protocol.EventPullRequestLinked, workspaceID, "user", userID, map[string]any{
+		"issue_id":     uuidToString(issue.ID),
+		"pull_request": resp,
+	})
+	writeJSON(w, http.StatusCreated, map[string]any{"pull_request": resp})
+}
+
+// UnlinkPullRequestFromIssue (DELETE /api/issues/{id}/pull-requests/{source}/{prId})
+// drops the join-table row but keeps the PR record (matches DetachLabel —
+// the PR may still be useful from other issues or for history). Both the
+// source path segment and the PR UUID are bounded to this workspace so a
+// guessed cross-tenant prId returns 404.
+func (h *Handler) UnlinkPullRequestFromIssue(w http.ResponseWriter, r *http.Request) {
+	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	source := chi.URLParam(r, "source")
+	if source != "github" && source != "aone" {
+		writeError(w, http.StatusBadRequest, "unsupported pull request source")
+		return
+	}
+	prUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "prId"), "prId")
+	if !ok {
+		return
+	}
+
+	ctx := r.Context()
+	switch source {
+	case "github":
+		if _, err := h.Queries.GetGitHubPullRequestByID(ctx, db.GetGitHubPullRequestByIDParams{
+			ID:          prUUID,
+			WorkspaceID: issue.WorkspaceID,
+		}); err != nil {
+			writeError(w, http.StatusNotFound, "pull request not found")
+			return
+		}
+	case "aone":
+		if _, err := h.Queries.GetAonePullRequestByID(ctx, db.GetAonePullRequestByIDParams{
+			ID:          prUUID,
+			WorkspaceID: issue.WorkspaceID,
+		}); err != nil {
+			writeError(w, http.StatusNotFound, "pull request not found")
+			return
+		}
+	}
+
+	if err := h.Queries.UnlinkIssueFromPullRequest(ctx, db.UnlinkIssueFromPullRequestParams{
+		IssueID:       issue.ID,
+		PullRequestID: prUUID,
+		Source:        source,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to unlink pull request")
+		return
+	}
+
+	h.publish(protocol.EventPullRequestUnlinked, uuidToString(issue.WorkspaceID), "user", userID, map[string]any{
+		"issue_id":        uuidToString(issue.ID),
+		"pull_request_id": uuidToString(prUUID),
+		"source":          source,
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// enrichAonePullRequest is a thin wrapper around aone.Enrich that swallows
+// the "a1 not installed" / generic enrichment errors so the link handler
+// can still create the row. We log unexpected errors so operators learn
+// about a flaky a1 install but never block the link.
+func (h *Handler) enrichAonePullRequest(ctx context.Context, p parsedPullRequestURL) (aone.Enrichment, bool) {
+	if p.RepoOwner == nil || p.RepoName == nil || p.Number == nil {
+		return aone.Enrichment{}, false
+	}
+	e, err := aone.Enrich(ctx, *p.RepoOwner, *p.RepoName, *p.Number)
+	if err != nil {
+		if !errors.Is(err, aone.ErrAoneNotConfigured) {
+			slog.Warn("aone enrich failed", "err", err, "url", p.HTMLURL)
+		}
+		return aone.Enrichment{}, false
+	}
+	return e, true
+}
+
+func nowUTC() time.Time { return time.Now().UTC() }
 
 // ── Webhook ─────────────────────────────────────────────────────────────────
 
@@ -568,10 +837,11 @@ func (h *Handler) handlePullRequestEvent(ctx context.Context, body []byte) {
 			continue
 		}
 		if err := h.Queries.LinkIssueToPullRequest(ctx, db.LinkIssueToPullRequestParams{
-			IssueID:        issue.ID,
-			PullRequestID:  pr.ID,
-			LinkedByType:   strToText("system"),
-			LinkedByID:     pgtype.UUID{},
+			IssueID:       issue.ID,
+			PullRequestID: pr.ID,
+			Source:        "github",
+			LinkedByType:  strToText("system"),
+			LinkedByID:    pgtype.UUID{},
 		}); err != nil {
 			slog.Warn("github: link failed", "err", err)
 			continue

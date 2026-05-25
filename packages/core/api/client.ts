@@ -88,7 +88,7 @@ import type {
   ListAutopilotRunsResponse,
   NotificationPreferenceResponse,
   NotificationPreferences,
-  GitHubPullRequest,
+  PullRequest,
   ListGitHubInstallationsResponse,
   GitHubConnectResponse,
   Squad,
@@ -123,9 +123,13 @@ import {
   EMPTY_ATTACHMENT,
   EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
+  EMPTY_PULL_REQUEST,
+  EMPTY_PULL_REQUEST_LIST,
   EMPTY_SKILL,
   EMPTY_TIMELINE_ENTRIES,
   ListIssuesResponseSchema,
+  PullRequestLinkResponseSchema,
+  PullRequestListResponseSchema,
   SkillSchema,
   SubscribersListSchema,
   TimelineEntriesSchema,
@@ -1675,7 +1679,37 @@ export class ApiClient {
     });
   }
 
-  async listIssuePullRequests(issueId: string): Promise<{ pull_requests: GitHubPullRequest[] }> {
-    return this.fetch(`/api/issues/${issueId}/pull-requests`);
+  async listIssuePullRequests(issueId: string): Promise<{ pull_requests: PullRequest[] }> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/pull-requests`);
+    return parseWithFallback(raw, PullRequestListResponseSchema, EMPTY_PULL_REQUEST_LIST, {
+      endpoint: "GET /api/issues/:id/pull-requests",
+    });
+  }
+
+  async linkPullRequest(
+    issueId: string,
+    body: { url: string; title?: string },
+  ): Promise<PullRequest> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/pull-requests`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    const parsed = parseWithFallback(
+      raw,
+      PullRequestLinkResponseSchema,
+      { pull_request: EMPTY_PULL_REQUEST },
+      { endpoint: "POST /api/issues/:id/pull-requests" },
+    );
+    return parsed.pull_request;
+  }
+
+  async unlinkPullRequest(
+    issueId: string,
+    source: PullRequest["source"],
+    prId: string,
+  ): Promise<void> {
+    await this.fetch(`/api/issues/${issueId}/pull-requests/${source}/${prId}`, {
+      method: "DELETE",
+    });
   }
 }

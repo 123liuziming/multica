@@ -74,6 +74,7 @@
     "./questions/ws-updaters": "./questions/ws-updaters.ts",
     "./github": "./github/index.ts",
     "./github/queries": "./github/queries.ts",
+    "./github/mutations": "./github/mutations.ts",
     "./feedback": "./feedback/index.ts",
     "./feedback/mutations": "./feedback/mutations.ts",
     "./realtime": "./realtime/index.ts",

@@ -380,6 +380,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/labels", h.AttachLabel)
 					r.Delete("/labels/{labelId}", h.DetachLabel)
 					r.Get("/pull-requests", h.ListPullRequestsForIssue)
+					r.Post("/pull-requests", h.LinkPullRequestToIssue)
+					r.Delete("/pull-requests/{source}/{prId}", h.UnlinkPullRequestFromIssue)
 					r.Get("/questions", h.ListIssueQuestions)
 				})
 			})

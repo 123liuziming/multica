@@ -228,6 +228,14 @@ func init() {
 	issueCmd.AddCommand(issueRunMessagesCmd)
 	issueCmd.AddCommand(issueRerunCmd)
 	issueCmd.AddCommand(issueSearchCmd)
+	issueCmd.AddCommand(issuePRCmd)
+
+	issuePRCmd.AddCommand(issuePRLinkCmd)
+	issuePRCmd.AddCommand(issuePRUnlinkCmd)
+	issuePRCmd.AddCommand(issuePRListCmd)
+	issuePRLinkCmd.Flags().String("title", "", "Override the title (default: enriched or hostname-derived)")
+	issuePRLinkCmd.Flags().String("output", "json", "Output format: json")
+	issuePRListCmd.Flags().String("output", "table", "Output format: table or json")
 
 	issueCommentCmd.AddCommand(issueCommentListCmd)
 	issueCommentCmd.AddCommand(issueCommentAddCmd)
@@ -1623,4 +1631,164 @@ func truncateID(id string) string {
 		return string(runes[:8])
 	}
 	return id
+}
+
+// ── PR link / unlink ───────────────────────────────────────────────────────
+
+var issuePRCmd = &cobra.Command{
+	Use:   "pr",
+	Short: "Manage linked pull requests on an issue",
+}
+
+var issuePRLinkCmd = &cobra.Command{
+	Use:   "link <issue> <url>",
+	Short: "Attach a github.com or code.alibaba-inc.com PR/MR url to an issue",
+	Long: `Attach a pull request URL to an issue. Currently supports github.com
+and code.alibaba-inc.com (Aone) URLs. Aone titles/status are auto-fetched
+via the 'a1' CLI when installed on the server.`,
+	Args: cobra.ExactArgs(2),
+	RunE: runIssuePRLink,
+}
+
+var issuePRUnlinkCmd = &cobra.Command{
+	Use:   "unlink <issue> <url-or-pr-id>",
+	Short: "Detach a PR from an issue (PR row itself is kept)",
+	Args:  cobra.ExactArgs(2),
+	RunE:  runIssuePRUnlink,
+}
+
+var issuePRListCmd = &cobra.Command{
+	Use:   "list <issue>",
+	Short: "List PRs linked to an issue",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runIssuePRList,
+}
+
+func runIssuePRLink(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	issueRef, err := resolveIssueRef(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve issue: %w", err)
+	}
+
+	title, _ := cmd.Flags().GetString("title")
+	body := map[string]any{"url": args[1]}
+	if t := strings.TrimSpace(title); t != "" {
+		body["title"] = t
+	}
+
+	var resp struct {
+		PullRequest map[string]any `json:"pull_request"`
+	}
+	if err := client.PostJSON(ctx, "/api/issues/"+issueRef.ID+"/pull-requests", body, &resp); err != nil {
+		return fmt.Errorf("link pr: %w", err)
+	}
+	return cli.PrintJSON(os.Stdout, resp.PullRequest)
+}
+
+func runIssuePRUnlink(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	issueRef, err := resolveIssueRef(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve issue: %w", err)
+	}
+
+	source, prID, err := resolvePullRequestRef(ctx, client, issueRef.ID, args[1])
+	if err != nil {
+		return err
+	}
+
+	if err := client.DeleteJSON(ctx, "/api/issues/"+issueRef.ID+"/pull-requests/"+source+"/"+prID); err != nil {
+		return fmt.Errorf("unlink pr: %w", err)
+	}
+	fmt.Fprintf(os.Stdout, "Unlinked %s pull request %s from %s\n", source, prID, issueRef.Display)
+	return nil
+}
+
+func runIssuePRList(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	issueRef, err := resolveIssueRef(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve issue: %w", err)
+	}
+
+	var resp struct {
+		PullRequests []map[string]any `json:"pull_requests"`
+	}
+	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/pull-requests", &resp); err != nil {
+		return fmt.Errorf("list prs: %w", err)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, resp.PullRequests)
+	}
+	headers := []string{"SOURCE", "STATE", "TITLE", "URL"}
+	rows := make([][]string, 0, len(resp.PullRequests))
+	for _, pr := range resp.PullRequests {
+		rows = append(rows, []string{
+			strVal(pr, "source"),
+			strVal(pr, "state"),
+			strVal(pr, "title"),
+			strVal(pr, "html_url"),
+		})
+	}
+	cli.PrintTable(os.Stdout, headers, rows)
+	return nil
+}
+
+// resolvePullRequestRef accepts either a PR UUID (rare — agents may pass
+// this) or a URL the user already pasted. URL inputs are matched against
+// the issue's existing linked PRs so the user doesn't have to know whether
+// the URL went into github_pull_request or aone_pull_request.
+func resolvePullRequestRef(ctx context.Context, client *cli.APIClient, issueID, input string) (source, prID string, err error) {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return "", "", fmt.Errorf("pr identifier is required")
+	}
+
+	var resp struct {
+		PullRequests []map[string]any `json:"pull_requests"`
+	}
+	if err := client.GetJSON(ctx, "/api/issues/"+issueID+"/pull-requests", &resp); err != nil {
+		return "", "", fmt.Errorf("list prs: %w", err)
+	}
+	// UUID lookup wins — exact match on id.
+	if uuidRegexp.MatchString(trimmed) {
+		for _, pr := range resp.PullRequests {
+			if strVal(pr, "id") == trimmed {
+				return strVal(pr, "source"), trimmed, nil
+			}
+		}
+		return "", "", fmt.Errorf("no linked pr with id %s", trimmed)
+	}
+	// Otherwise, fuzzy by html_url. The server normalizes on insert; we
+	// don't replicate the normalizer here because the dedup constraint
+	// guarantees there's at most one row per URL, so trimming + exact
+	// match is enough for the common case (the user passes the same URL
+	// they used at link time).
+	for _, pr := range resp.PullRequests {
+		if strVal(pr, "html_url") == trimmed {
+			return strVal(pr, "source"), strVal(pr, "id"), nil
+		}
+	}
+	return "", "", fmt.Errorf("no linked pr matching %s", trimmed)
 }

@@ -69,12 +69,78 @@ RETURNING *;
 SELECT * FROM github_pull_request
 WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $4;
 
+-- name: GetGitHubPullRequestByID :one
+-- Workspace-scoped lookup used by the unlink handler so a guessed PR UUID
+-- from another tenant returns 404 instead of unlinking unrelated data.
+SELECT * FROM github_pull_request
+WHERE id = $1 AND workspace_id = $2;
+
+-- name: UpsertGitHubPullRequestByURL :one
+-- Manual link path: a user pastes a https://github.com/<owner>/<repo>/pull/<n>
+-- URL. We have no installation_id (the PR may live in a repo we never
+-- received a webhook for), so the column is left NULL on insert. The
+-- webhook upsert later fills it in if/when an installation arrives.
+INSERT INTO github_pull_request (
+    workspace_id, installation_id, repo_owner, repo_name, pr_number,
+    title, state, html_url, pr_created_at, pr_updated_at
+) VALUES (
+    $1, sqlc.narg('installation_id'), $2, $3, $4,
+    $5, $6, $7, now(), now()
+)
+ON CONFLICT (workspace_id, repo_owner, repo_name, pr_number) DO UPDATE SET
+    -- Don't clobber an enriched title with the user's pasted text or our
+    -- derived hostname. Webhook events already populate richer metadata.
+    updated_at = now()
+RETURNING *;
+
 -- name: ListPullRequestsByIssue :many
-SELECT pr.*
-FROM github_pull_request pr
-JOIN issue_pull_request ipr ON ipr.pull_request_id = pr.id
+-- Returns both github and aone rows for an issue. The aone branch is
+-- placed FIRST in the UNION so sqlc infers nullable types for repo_owner /
+-- repo_name / pr_number / pr_created_at / pr_updated_at (the github table
+-- declares them NOT NULL, but aone allows them to be empty for arbitrary
+-- URLs that don't parse cleanly).
+SELECT
+    apr.id,
+    apr.workspace_id,
+    'aone'::text AS source,
+    apr.html_url,
+    apr.title,
+    apr.state,
+    apr.repo_owner,
+    apr.repo_name,
+    apr.pr_number,
+    NULL::text AS branch,
+    apr.author_login,
+    apr.author_avatar_url,
+    apr.merged_at,
+    apr.closed_at,
+    apr.pr_created_at,
+    apr.pr_updated_at
+FROM aone_pull_request apr
+JOIN issue_pull_request ipr ON ipr.pull_request_id = apr.id AND ipr.source = 'aone'
 WHERE ipr.issue_id = $1
-ORDER BY pr.pr_created_at DESC;
+UNION ALL
+SELECT
+    gpr.id,
+    gpr.workspace_id,
+    'github'::text AS source,
+    gpr.html_url,
+    gpr.title,
+    gpr.state,
+    gpr.repo_owner,
+    gpr.repo_name,
+    gpr.pr_number,
+    gpr.branch,
+    gpr.author_login,
+    gpr.author_avatar_url,
+    gpr.merged_at,
+    gpr.closed_at,
+    gpr.pr_created_at,
+    gpr.pr_updated_at
+FROM github_pull_request gpr
+JOIN issue_pull_request ipr ON ipr.pull_request_id = gpr.id AND ipr.source = 'github'
+WHERE ipr.issue_id = $1
+ORDER BY pr_created_at DESC NULLS LAST;
 
 -- name: ListIssueIDsForPullRequest :many
 SELECT issue_id FROM issue_pull_request
@@ -91,7 +157,7 @@ SELECT
     COALESCE(SUM(CASE WHEN pr.state IN ('open', 'draft') THEN 1 ELSE 0 END), 0)::bigint AS open_count,
     COALESCE(SUM(CASE WHEN pr.state = 'merged' THEN 1 ELSE 0 END), 0)::bigint AS merged_count
 FROM github_pull_request pr
-JOIN issue_pull_request ipr ON ipr.pull_request_id = pr.id
+JOIN issue_pull_request ipr ON ipr.pull_request_id = pr.id AND ipr.source = 'github'
 WHERE ipr.issue_id = $1
   AND pr.id <> $2;
 
@@ -101,12 +167,12 @@ WHERE ipr.issue_id = $1
 
 -- name: LinkIssueToPullRequest :exec
 INSERT INTO issue_pull_request (
-    issue_id, pull_request_id, linked_by_type, linked_by_id
+    issue_id, pull_request_id, source, linked_by_type, linked_by_id
 ) VALUES (
-    $1, $2, sqlc.narg('linked_by_type'), sqlc.narg('linked_by_id')
+    $1, $2, $3, sqlc.narg('linked_by_type'), sqlc.narg('linked_by_id')
 )
-ON CONFLICT (issue_id, pull_request_id) DO NOTHING;
+ON CONFLICT (issue_id, pull_request_id, source) DO NOTHING;
 
 -- name: UnlinkIssueFromPullRequest :exec
 DELETE FROM issue_pull_request
-WHERE issue_id = $1 AND pull_request_id = $2;
+WHERE issue_id = $1 AND pull_request_id = $2 AND source = $3;

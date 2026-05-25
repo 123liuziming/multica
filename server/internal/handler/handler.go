@@ -166,6 +166,9 @@ func timestampToString(t pgtype.Timestamptz) string { return util.TimestampToStr
 func timestampToPtr(t pgtype.Timestamptz) *string   { return util.TimestampToPtr(t) }
 func uuidToPtr(u pgtype.UUID) *string               { return util.UUIDToPtr(u) }
 func int8ToPtr(v pgtype.Int8) *int64                { return util.Int8ToPtr(v) }
+func int4ToPtr(v pgtype.Int4) *int32                { return util.Int4ToPtr(v) }
+func ptrToInt4(v *int32) pgtype.Int4                { return util.PtrToInt4(v) }
+func ptrToInt8(v *int64) pgtype.Int8                { return util.PtrToInt8(v) }
 
 // parseUUIDOrBadRequest validates a UUID string sourced from user input
 // (URL params, request body, headers). On invalid input it writes a 400
