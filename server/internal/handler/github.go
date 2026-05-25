@@ -454,35 +454,6 @@ func (h *Handler) LinkPullRequestToIssue(w http.ResponseWriter, r *http.Request)
 	var prID pgtype.UUID
 
 	switch parsed.Source {
-	case prSourceGitHub:
-		// Should never be nil for github URLs — parser populates them when it
-		// recognizes the /pull/<n> path shape — but guard so a future parser
-		// change can't crash this handler.
-		if parsed.RepoOwner == nil || parsed.RepoName == nil || parsed.Number == nil {
-			writeError(w, http.StatusBadRequest, "github url is missing repo or number")
-			return
-		}
-		title := userTitle
-		if title == "" {
-			title = parsed.DerivedTitle
-		}
-		pr, err := h.Queries.UpsertGitHubPullRequestByURL(ctx, db.UpsertGitHubPullRequestByURLParams{
-			WorkspaceID: issue.WorkspaceID,
-			RepoOwner:   *parsed.RepoOwner,
-			RepoName:    *parsed.RepoName,
-			PrNumber:    *parsed.Number,
-			Title:       title,
-			State:       "open",
-			HtmlUrl:     parsed.HTMLURL,
-		})
-		if err != nil {
-			slog.Warn("link pr: upsert github failed", "err", err)
-			writeError(w, http.StatusInternalServerError, "failed to save pull request")
-			return
-		}
-		prID = pr.ID
-		resp = githubPullRequestToResponse(pr)
-
 	case prSourceAone:
 		title := userTitle
 		state := "unknown"

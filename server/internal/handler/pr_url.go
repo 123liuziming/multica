@@ -26,14 +26,13 @@ type parsedPullRequestURL struct {
 	DerivedTitle string // hostname + path-tail; the link handler falls back to this when no enrichment is available
 }
 
-var (
-	githubPullPathRe     = regexp.MustCompile(`^/([^/]+)/([^/]+)/pull/(\d+)$`)
-	aoneCodeReviewPathRe = regexp.MustCompile(`^/([^/]+)/([^/]+)/codereview/(\d+)$`)
-)
+var aoneCodeReviewPathRe = regexp.MustCompile(`^/([^/]+)/([^/]+)/codereview/(\d+)$`)
 
-// parsePullRequestURL normalizes raw and classifies it as github or aone.
-// Anything else returns an error — the product no longer supports arbitrary
-// external review URLs.
+// parsePullRequestURL normalizes raw and classifies it as Aone (the only
+// source supported for manual linking). GitHub URLs are rejected here even
+// though webhook auto-linking still populates github_pull_request rows —
+// the manual path has no way to obtain the installation_id required to
+// insert into that table, so we'd hit a NOT NULL constraint at INSERT.
 //
 // Normalization rules (so dedup on (workspace_id, html_url) is stable):
 //   - http/https only (rejects javascript:, data:, ftp: — otherwise the
@@ -76,20 +75,10 @@ func parsePullRequestURL(raw string) (parsedPullRequestURL, error) {
 
 	switch host {
 	case "github.com", "www.github.com":
-		if m := githubPullPathRe.FindStringSubmatch(path); m != nil {
-			owner, repo := m[1], m[2]
-			number, _ := strconv.Atoi(m[3])
-			n := int32(number)
-			return parsedPullRequestURL{
-				Source:       prSourceGitHub,
-				HTMLURL:      "https://github.com" + path,
-				RepoOwner:    &owner,
-				RepoName:     &repo,
-				Number:       &n,
-				DerivedTitle: fmt.Sprintf("%s/%s#%d", owner, repo, number),
-			}, nil
-		}
-		return parsedPullRequestURL{}, errors.New("github url must look like https://github.com/<owner>/<repo>/pull/<number>")
+		// GitHub PRs reach the system through the webhook auto-linker, which
+		// supplies the installation_id required by github_pull_request. The
+		// manual-link UI has no way to obtain that, so we refuse here.
+		return parsedPullRequestURL{}, errors.New("github pull requests are linked automatically via the GitHub App; manual linking is not supported")
 	case "code.alibaba-inc.com":
 		if m := aoneCodeReviewPathRe.FindStringSubmatch(path); m != nil {
 			owner, repo := m[1], m[2]

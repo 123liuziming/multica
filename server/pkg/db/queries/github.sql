@@ -75,24 +75,6 @@ WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $
 SELECT * FROM github_pull_request
 WHERE id = $1 AND workspace_id = $2;
 
--- name: UpsertGitHubPullRequestByURL :one
--- Manual link path: a user pastes a https://github.com/<owner>/<repo>/pull/<n>
--- URL. We have no installation_id (the PR may live in a repo we never
--- received a webhook for), so the column is left NULL on insert. The
--- webhook upsert later fills it in if/when an installation arrives.
-INSERT INTO github_pull_request (
-    workspace_id, installation_id, repo_owner, repo_name, pr_number,
-    title, state, html_url, pr_created_at, pr_updated_at
-) VALUES (
-    $1, sqlc.narg('installation_id'), $2, $3, $4,
-    $5, $6, $7, now(), now()
-)
-ON CONFLICT (workspace_id, repo_owner, repo_name, pr_number) DO UPDATE SET
-    -- Don't clobber an enriched title with the user's pasted text or our
-    -- derived hostname. Webhook events already populate richer metadata.
-    updated_at = now()
-RETURNING *;
-
 -- name: ListPullRequestsByIssue :many
 -- Returns both github and aone rows for an issue. The aone branch is
 -- placed FIRST in the UNION so sqlc infers nullable types for repo_owner /
