@@ -658,8 +658,13 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 	// run with the now-deleted content already embedded in its prompt. Must
 	// run before DeleteComment because the FK ON DELETE SET NULL would
 	// otherwise nullify trigger_comment_id and orphan those tasks in queued.
-	if err := h.TaskService.CancelTasksByTriggerComment(r.Context(), comment.ID); err != nil {
+	cancelledTasks, err := h.TaskService.CancelTasksByTriggerComment(r.Context(), comment.ID)
+	if err != nil {
 		slog.Warn("cancel tasks for deleted trigger comment failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+	} else {
+		for _, t := range cancelledTasks {
+			h.deletePendingQuestionsForTask(r.Context(), t.ID)
+		}
 	}
 
 	if err := h.Queries.DeleteComment(r.Context(), comment.ID); err != nil {

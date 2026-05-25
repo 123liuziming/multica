@@ -36,20 +36,19 @@ const (
 	// means something went wrong (e.g. StartTask API call failed silently).
 	dispatchTimeoutSeconds = 300.0
 	// runningTimeoutSeconds fails tasks stuck in 'running' beyond this.
-	// The default agent timeout is 2h, so 2.5h gives a generous buffer.
-	runningTimeoutSeconds = 9000.0
+	// The default agent timeout is 72h, so 73h gives a buffer while still
+	// bounding hung agent processes and missed daemon completion reports.
+	runningTimeoutSeconds = 73 * 3600.0
 	// queuedTTLSeconds expires tasks that have been sitting in 'queued'
 	// for longer than this without ever being claimed. This is the cleanup
 	// arm of the MUL-1899 backlog fix: even with the dispatch-time
 	// admission gate that blocks new enqueues against offline runtimes,
 	// tasks already on the queue when a runtime drops off (or that lost
 	// the race against a runtime that went offline mid-tick) need a
-	// time-bounded exit. 2 hours is conservatively above any reasonable
-	// "queued behind a long-running task" window for an online runtime
-	// (default agent timeout is 2h, sweeper interval is 30s) so we don't
-	// expire legitimately-pending work, while still draining the historical
-	// 87k autopilot backlog within ~24h once enabled.
-	queuedTTLSeconds = 2 * 3600.0
+	// time-bounded exit. 73 hours stays above the default agent timeout so
+	// work queued behind a task waiting on AskUserQuestion is not expired
+	// prematurely.
+	queuedTTLSeconds = 73 * 3600.0
 	// queuedExpireBatchSize caps how many queued rows a single sweeper tick
 	// transitions to failed. Keeps the sweep transaction short even when
 	// the historical backlog is large (~89k at MUL-1899 baseline). At 30s

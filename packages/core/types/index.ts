@@ -60,6 +60,13 @@ export type { IssueSubscriber } from "./subscriber";
 export type * from "./events";
 export type * from "./api";
 export type { Attachment } from "./attachment";
+export type {
+  QuestionStatus,
+  QuestionOption,
+  AgentQuestion,
+  QuestionCountsResponse,
+  AnswerQuestionRequest,
+} from "./question";
 export type { ChatSession, ChatMessage, ChatPendingTask, PendingChatTaskItem, PendingChatTasksResponse, SendChatMessageResponse } from "./chat";
 export type { StorageAdapter } from "./storage";
 export type {
@@ -78,8 +85,9 @@ export type {
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type {
   GitHubInstallation,
-  GitHubPullRequest,
-  GitHubPullRequestState,
+  PullRequest,
+  PullRequestSource,
+  PullRequestState,
   ListGitHubInstallationsResponse,
   GitHubConnectResponse,
 } from "./github";

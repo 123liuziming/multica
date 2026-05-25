@@ -52,6 +52,8 @@ import { collectThreadReplies } from "./thread-utils";
 import { AgentLiveCard } from "./agent-live-card";
 import { ExecutionLogSection } from "./execution-log-section";
 import { PullRequestList } from "./pull-request-list";
+import { LinkPullRequestModal } from "../../modals/link-pull-request";
+import { PendingQuestionsPanel } from "./pending-questions-panel";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
@@ -222,6 +224,14 @@ function formatActivity(
       });
     case "description_updated":
       return t(($) => $.activity.description_updated);
+    case "question_created":
+      return t(($) => $.activity.question_created, {
+        title: details.header || details.question || "?",
+      });
+    case "question_answered":
+      return t(($) => $.activity.question_answered, {
+        title: details.header || details.question || "?",
+      });
     case "task_completed":
       return t(($) => $.activity.task_completed, { count: entry.coalesced_count ?? 1 });
     case "task_failed":
@@ -497,6 +507,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const [detailsOpen, setDetailsOpen] = useState(true);
   const [parentIssueOpen, setParentIssueOpen] = useState(true);
   const [pullRequestsOpen, setPullRequestsOpen] = useState(true);
+  const [linkPRModalOpen, setLinkPRModalOpen] = useState(false);
   const [tokenUsageOpen, setTokenUsageOpen] = useState(true);
   // Virtuoso's `customScrollParent` wants the HTMLElement, not a ref. A plain
   // `useRef.current` does not trigger a re-render when it populates, so the
@@ -635,10 +646,15 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     // Coalesce consecutive activities from the same actor + action.
     // - task_completed / task_failed: no time limit (these repeat across runs)
     // - all other actions: within a 2-minute window
-    // - squad_leader_evaluated: never coalesce; outcome/reason are audit data
+    // - squad_leader_evaluated/question_*: never coalesce; details identify
+    //   the specific audit event.
     const COALESCE_MS = 2 * 60 * 1000;
     const NO_TIME_LIMIT_ACTIONS = new Set(["task_completed", "task_failed"]);
-    const NEVER_COALESCE_ACTIONS = new Set(["squad_leader_evaluated"]);
+    const NEVER_COALESCE_ACTIONS = new Set([
+      "squad_leader_evaluated",
+      "question_created",
+      "question_answered",
+    ]);
     const coalesced: TimelineEntry[] = [];
     for (const entry of topLevel) {
       if (entry.type === "activity") {
@@ -995,15 +1011,30 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
       {/* Pull requests */}
       <div>
-        <button
-          className={`flex w-full items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors mb-2 hover:bg-accent/70 ${pullRequestsOpen ? "" : "text-muted-foreground hover:text-foreground"}`}
-          onClick={() => setPullRequestsOpen(!pullRequestsOpen)}
-        >
-          {t(($) => $.detail.section_pull_requests)}
-          <ChevronRight className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${pullRequestsOpen ? "rotate-90" : ""}`} />
-        </button>
+        <div className="flex items-center gap-1 mb-2">
+          <button
+            className={`flex flex-1 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors hover:bg-accent/70 ${pullRequestsOpen ? "" : "text-muted-foreground hover:text-foreground"}`}
+            onClick={() => setPullRequestsOpen(!pullRequestsOpen)}
+          >
+            {t(($) => $.detail.section_pull_requests)}
+            <ChevronRight className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${pullRequestsOpen ? "rotate-90" : ""}`} />
+          </button>
+          <button
+            type="button"
+            aria-label={t(($) => $.detail.link_pull_request_aria)}
+            title={t(($) => $.detail.link_pull_request_tooltip)}
+            onClick={() => setLinkPRModalOpen(true)}
+            className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        </div>
         {pullRequestsOpen && <div className="pl-2"><PullRequestList issueId={id} /></div>}
+        <LinkPullRequestModal issueId={id} open={linkPRModalOpen} onClose={() => setLinkPRModalOpen(false)} />
       </div>
+
+      {/* Issue-linked questions. The panel stays visible even when empty. */}
+      <PendingQuestionsPanel issueId={id} />
 
       {/* Details */}
       <div>

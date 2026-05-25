@@ -265,6 +265,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		r.Post("/runtimes/{runtimeId}/recover-orphans", h.RecoverOrphanedTasks)
 		r.Post("/tasks/{taskId}/session", h.PinTaskSession)
+
+		// AskUserQuestion bridge: hook script POSTs to daemon, daemon
+		// forwards to server here, then long-polls /wait for the answer.
+		r.Post("/tasks/{taskId}/questions", h.CreateTaskQuestions)
+		r.Get("/questions/{id}/wait", h.WaitForQuestion)
 	})
 
 	// Protected API routes
@@ -375,6 +380,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/labels", h.AttachLabel)
 					r.Delete("/labels/{labelId}", h.DetachLabel)
 					r.Get("/pull-requests", h.ListPullRequestsForIssue)
+					r.Post("/pull-requests", h.LinkPullRequestToIssue)
+					r.Delete("/pull-requests/{source}/{prId}", h.UnlinkPullRequestFromIssue)
+					r.Get("/questions", h.ListIssueQuestions)
 				})
 			})
 
@@ -484,7 +492,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/tasks", h.ListAgentTasks)
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
+					r.Get("/questions", h.ListAgentQuestions)
 				})
+			})
+
+			// Agent questions (AskUserQuestion records). Workspace scoped via
+			// X-Workspace-ID header on the request.
+			r.Route("/api/questions", func(r chi.Router) {
+				r.Get("/", h.ListWorkspaceQuestions)
+				r.Get("/counts", h.GetQuestionPendingCounts)
+				r.Get("/{id}", h.GetQuestion)
+				r.Post("/{id}/answer", h.AnswerQuestion)
 			})
 
 			// Agent templates catalog (browse + detail). The Create flow

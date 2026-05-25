@@ -34,6 +34,7 @@ import {
   X,
   Zap,
   Users,
+  HelpCircle,
 } from "lucide-react";
 import { WorkspaceAvatar } from "../workspace/workspace-avatar";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
@@ -72,6 +73,7 @@ import { inboxKeys, deduplicateInboxItems } from "@multica/core/inbox/queries";
 import { api, ApiError } from "@multica/core/api";
 import { useModalStore } from "@multica/core/modals";
 import { useMyRuntimesNeedUpdate } from "@multica/core/runtimes/hooks";
+import { useWorkspacePendingQuestionCount } from "@multica/core/questions";
 import { pinListOptions } from "@multica/core/pins/queries";
 import { useDeletePin, useReorderPins } from "@multica/core/pins/mutations";
 import { issueDetailOptions } from "@multica/core/issues/queries";
@@ -105,6 +107,7 @@ const EMPTY_INBOX: Awaited<ReturnType<typeof api.listInbox>> = [];
 type NavKey =
   | "inbox"
   | "myIssues"
+  | "questions"
   | "issues"
   | "projects"
   | "autopilots"
@@ -119,6 +122,7 @@ type NavKey =
 type NavLabelKey =
   | "inbox"
   | "my_issues"
+  | "questions"
   | "issues"
   | "projects"
   | "autopilots"
@@ -131,6 +135,7 @@ type NavLabelKey =
 
 const personalNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [
   { key: "inbox", labelKey: "inbox", icon: Inbox },
+  { key: "questions", labelKey: "questions", icon: HelpCircle },
   { key: "myIssues", labelKey: "my_issues", icon: CircleUser },
 ];
 
@@ -360,6 +365,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
     () => deduplicateInboxItems(inboxItems).filter((i) => !i.read).length,
     [inboxItems],
   );
+  const pendingQuestionCount = useWorkspacePendingQuestionCount(wsId);
   const hasRuntimeUpdates = useMyRuntimesNeedUpdate(wsId);
   const { data: pinnedItems = EMPTY_PINS } = useQuery({
     ...pinListOptions(wsId ?? "", userId ?? ""),
@@ -628,6 +634,11 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         {item.key === "inbox" && unreadCount > 0 && (
                           <span className="ml-auto text-xs">
                             {unreadCount > 99 ? "99+" : unreadCount}
+                          </span>
+                        )}
+                        {item.key === "questions" && pendingQuestionCount > 0 && (
+                          <span className="ml-auto text-xs">
+                            {pendingQuestionCount > 99 ? "99+" : pendingQuestionCount}
                           </span>
                         )}
                       </SidebarMenuButton>

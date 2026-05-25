@@ -72,6 +72,7 @@ export const mockAgents: Agent[] = [
     updated_at: "2026-01-01T00:00:00Z",
     archived_at: null,
     archived_by: null,
+    allow_ask_user_question: false,
   },
 ];
 

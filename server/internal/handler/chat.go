@@ -358,6 +358,13 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 	// tx that didn't actually persist.
 	h.TaskService.BroadcastCancelledTasks(r.Context(), cancelled)
 
+	// Drop pending AskUserQuestion rows for each cancelled task so daemon
+	// hooks unblock immediately. Best-effort, runs after commit so a row
+	// that survives the cancel SQL doesn't outlive its DELETE.
+	for _, t := range cancelled {
+		h.deletePendingQuestionsForTask(r.Context(), t.ID)
+	}
+
 	resolvedSessionID := uuidToString(session.ID)
 	h.publishChat(protocol.EventChatSessionDeleted, workspaceID, "member", userID, resolvedSessionID, protocol.ChatSessionDeletedPayload{
 		ChatSessionID: resolvedSessionID,
@@ -732,6 +739,10 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	// Drop any pending AskUserQuestion rows so the hook's long-poll wakes
+	// instead of stalling until the 24h timeout. See deletePendingQuestionsForTask.
+	h.deletePendingQuestionsForTask(r.Context(), taskUUID)
 
 	writeJSON(w, http.StatusOK, taskToResponse(*cancelled))
 }

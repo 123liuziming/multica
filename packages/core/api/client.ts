@@ -88,11 +88,14 @@ import type {
   ListAutopilotRunsResponse,
   NotificationPreferenceResponse,
   NotificationPreferences,
-  GitHubPullRequest,
+  PullRequest,
   ListGitHubInstallationsResponse,
   GitHubConnectResponse,
   Squad,
   SquadMember,
+  AgentQuestion,
+  QuestionCountsResponse,
+  AnswerQuestionRequest,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import { type Logger, noopLogger } from "../logger";
@@ -100,9 +103,15 @@ import { createRequestId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
 import {
+  AgentQuestionListSchema,
+  AgentQuestionSchema,
   AgentTemplateSchema,
   AgentTemplateSummaryListSchema,
   AttachmentResponseSchema,
+  EMPTY_AGENT_QUESTION,
+  EMPTY_AGENT_QUESTION_LIST,
+  EMPTY_QUESTION_COUNTS,
+  QuestionCountsSchema,
   ChildIssuesResponseSchema,
   CommentsListSchema,
   CreateAgentFromTemplateResponseSchema,
@@ -114,9 +123,13 @@ import {
   EMPTY_ATTACHMENT,
   EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
+  EMPTY_PULL_REQUEST,
+  EMPTY_PULL_REQUEST_LIST,
   EMPTY_SKILL,
   EMPTY_TIMELINE_ENTRIES,
   ListIssuesResponseSchema,
+  PullRequestLinkResponseSchema,
+  PullRequestListResponseSchema,
   SkillSchema,
   SubscribersListSchema,
   TimelineEntriesSchema,
@@ -1008,6 +1021,84 @@ export class ApiClient {
     return this.fetch("/api/inbox/archive-completed", { method: "POST" });
   }
 
+  // Agent questions — the persisted side of Claude Code's AskUserQuestion
+  // tool. See packages/core/types/question.ts for the wire shape.
+  async listWorkspaceQuestions(params?: {
+    status?: "pending" | "answered" | "cancelled" | "all";
+    limit?: number;
+  }): Promise<AgentQuestion[]> {
+    const search = new URLSearchParams();
+    if (params?.status) search.set("status", params.status);
+    if (params?.limit) search.set("limit", String(params.limit));
+    const path = `/api/questions${search.size ? `?${search}` : ""}`;
+    const raw = await this.fetch<unknown>(path);
+    return parseWithFallback(
+      raw,
+      AgentQuestionListSchema,
+      EMPTY_AGENT_QUESTION_LIST,
+      { endpoint: "GET /api/questions" },
+    );
+  }
+
+  async getQuestionCounts(): Promise<QuestionCountsResponse> {
+    const raw = await this.fetch<unknown>("/api/questions/counts");
+    return parseWithFallback(
+      raw,
+      QuestionCountsSchema,
+      EMPTY_QUESTION_COUNTS,
+      { endpoint: "GET /api/questions/counts" },
+    );
+  }
+
+  async getQuestion(id: string): Promise<AgentQuestion> {
+    const raw = await this.fetch<unknown>(`/api/questions/${id}`);
+    return parseWithFallback(raw, AgentQuestionSchema, EMPTY_AGENT_QUESTION, {
+      endpoint: "GET /api/questions/:id",
+    });
+  }
+
+  async answerQuestion(id: string, data: AnswerQuestionRequest): Promise<AgentQuestion> {
+    const raw = await this.fetch<unknown>(`/api/questions/${id}/answer`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, AgentQuestionSchema, EMPTY_AGENT_QUESTION, {
+      endpoint: "POST /api/questions/:id/answer",
+    });
+  }
+
+  async listIssueQuestions(issueId: string, params?: {
+    status?: "pending" | "answered" | "cancelled" | "all";
+  }): Promise<AgentQuestion[]> {
+    const search = new URLSearchParams();
+    if (params?.status) search.set("status", params.status);
+    const path = `/api/issues/${issueId}/questions${search.size ? `?${search}` : ""}`;
+    const raw = await this.fetch<unknown>(path);
+    return parseWithFallback(
+      raw,
+      AgentQuestionListSchema,
+      EMPTY_AGENT_QUESTION_LIST,
+      { endpoint: "GET /api/issues/:id/questions" },
+    );
+  }
+
+  async listAgentQuestions(agentId: string, params?: {
+    status?: "pending" | "answered" | "cancelled" | "all";
+    limit?: number;
+  }): Promise<AgentQuestion[]> {
+    const search = new URLSearchParams();
+    if (params?.status) search.set("status", params.status);
+    if (params?.limit) search.set("limit", String(params.limit));
+    const path = `/api/agents/${agentId}/questions${search.size ? `?${search}` : ""}`;
+    const raw = await this.fetch<unknown>(path);
+    return parseWithFallback(
+      raw,
+      AgentQuestionListSchema,
+      EMPTY_AGENT_QUESTION_LIST,
+      { endpoint: "GET /api/agents/:id/questions" },
+    );
+  }
+
   // Notification preferences
   async getNotificationPreferences(): Promise<NotificationPreferenceResponse> {
     return this.fetch("/api/notification-preferences");
@@ -1588,7 +1679,37 @@ export class ApiClient {
     });
   }
 
-  async listIssuePullRequests(issueId: string): Promise<{ pull_requests: GitHubPullRequest[] }> {
-    return this.fetch(`/api/issues/${issueId}/pull-requests`);
+  async listIssuePullRequests(issueId: string): Promise<{ pull_requests: PullRequest[] }> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/pull-requests`);
+    return parseWithFallback(raw, PullRequestListResponseSchema, EMPTY_PULL_REQUEST_LIST, {
+      endpoint: "GET /api/issues/:id/pull-requests",
+    });
+  }
+
+  async linkPullRequest(
+    issueId: string,
+    body: { url: string; title?: string },
+  ): Promise<PullRequest> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/pull-requests`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    const parsed = parseWithFallback(
+      raw,
+      PullRequestLinkResponseSchema,
+      { pull_request: EMPTY_PULL_REQUEST },
+      { endpoint: "POST /api/issues/:id/pull-requests" },
+    );
+    return parsed.pull_request;
+  }
+
+  async unlinkPullRequest(
+    issueId: string,
+    source: PullRequest["source"],
+    prId: string,
+  ): Promise<void> {
+    await this.fetch(`/api/issues/${issueId}/pull-requests/${source}/${prId}`, {
+      method: "DELETE",
+    });
   }
 }

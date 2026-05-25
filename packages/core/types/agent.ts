@@ -134,6 +134,11 @@ export interface Agent {
   model: string;
   owner_id: string | null;
   skills: AgentSkillSummary[];
+  /** When true the daemon writes a PreToolUse hook that intercepts the
+   *  Claude Code AskUserQuestion tool and routes the question to multica.
+   *  Toggling this only affects tasks queued AFTER the change — in-flight
+   *  tasks keep whatever was wired in at dispatch time. */
+  allow_ask_user_question: boolean;
   created_at: string;
   updated_at: string;
   archived_at: string | null;
@@ -165,6 +170,7 @@ export interface CreateAgentRequest {
   visibility?: AgentVisibility;
   max_concurrent_tasks?: number;
   model?: string;
+  allow_ask_user_question?: boolean;
   /** Optional template slug used by the onboarding agent picker. Surfaced
    *  as the `template` property on the `agent_created` PostHog event. */
   template?: string;
@@ -253,6 +259,7 @@ export interface UpdateAgentRequest {
   status?: AgentStatus;
   max_concurrent_tasks?: number;
   model?: string;
+  allow_ask_user_question?: boolean;
 }
 
 // Skills

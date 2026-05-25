@@ -52,6 +52,7 @@ const fullHistoryAgent: Agent = {
   updated_at: new Date(NOW).toISOString(),
   archived_at: null,
   archived_by: null,
+  allow_ask_user_question: false,
 };
 
 describe("deriveAgentActivity", () => {

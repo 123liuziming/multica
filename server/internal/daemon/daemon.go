@@ -995,7 +995,7 @@ func (d *Daemon) syncWorkspacesFromAPI(ctx context.Context) error {
 		// Tell the server about any tasks the previous daemon process was
 		// running on these runtimes. Without this, an issue can stay stuck
 		// at in_progress until the slow heartbeat sweeper or the in-flight
-		// task timeout (2.5h) kicks in.
+		// task timeout kicks in.
 		for _, rid := range runtimeIDs {
 			if err := d.client.RecoverOrphans(ctx, rid); err != nil {
 				d.logger.Warn("recover-orphans failed", "runtime_id", rid, "error", err)
@@ -1973,6 +1973,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		skills = task.Agent.Skills
 		instructions = task.Agent.Instructions
 	}
+	allowAskUser := task.Agent != nil && task.Agent.AllowAskUserQuestion && provider == "claude"
 
 	// Prepare isolated execution environment.
 	// Repos are passed as metadata only — the agent checks them out on demand
@@ -1983,6 +1984,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		AgentID:                 agentID,
 		AgentName:               agentName,
 		AgentInstructions:       instructions,
+		AllowAskUserQuestion:    allowAskUser,
 		AgentSkills:             convertSkillsForEnv(skills),
 		Repos:                   convertReposForEnv(task.Repos),
 		ProjectID:               task.ProjectID,
@@ -2048,8 +2050,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
 	}
 	var providerConfigPath string
-	if len(task.ProviderConfig) > 0 {
-		p, err := execenv.InjectProviderConfig(env.WorkDir, env.CodexHome, provider, task.ProviderConfig)
+	if len(task.ProviderConfig) > 0 || allowAskUser {
+		p, err := execenv.InjectProviderConfig(env.WorkDir, env.CodexHome, provider, execenv.ProviderConfigOptions{
+			Raw:                  task.ProviderConfig,
+			AllowAskUserQuestion: allowAskUser,
+			DaemonPort:           d.cfg.HealthPort,
+		})
 		if err != nil {
 			d.logger.Warn("execenv: inject provider config failed (non-fatal)", "error", err)
 		} else {

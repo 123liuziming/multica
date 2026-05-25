@@ -151,6 +151,104 @@ func TestDaemonRegister_WithDaemonToken_WorkspaceMismatch(t *testing.T) {
 	}
 }
 
+func TestCreateTaskQuestionsReusesMatchingIssueQuestion(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	agentID := createHandlerTestAgent(t, "Question Reuse Agent", nil)
+	issueID := createTestIssue(t, "Question reuse issue", "todo", "low")
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+
+	createTask := func(t *testing.T) string {
+		t.Helper()
+		var taskID string
+		if err := testPool.QueryRow(context.Background(), `
+			INSERT INTO agent_task_queue (
+				agent_id, runtime_id, issue_id, status, priority,
+				dispatched_at, started_at
+			)
+			VALUES ($1, $2, $3, 'running', 0, now(), now())
+			RETURNING id
+		`, agentID, handlerTestRuntimeID(t), issueID).Scan(&taskID); err != nil {
+			t.Fatalf("create task: %v", err)
+		}
+		t.Cleanup(func() {
+			testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		})
+		return taskID
+	}
+
+	questionBody := map[string]any{"questions": []map[string]any{{
+		"header":      "Deploy target",
+		"question":    "Which deployment target should I use?",
+		"multiSelect": false,
+		"options": []map[string]any{
+			{"label": "Vercel", "description": "managed"},
+			{"label": "Self-host", "description": "owned infra"},
+		},
+	}}}
+	createQuestions := func(t *testing.T, taskID string, body map[string]any) (int, []QuestionResponse) {
+		t.Helper()
+		req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+taskID+"/questions", body, testWorkspaceID, "question-reuse-daemon")
+		req = withURLParam(req, "taskId", taskID)
+		w := httptest.NewRecorder()
+		testHandler.CreateTaskQuestions(w, req)
+		if w.Code != http.StatusCreated && w.Code != http.StatusOK {
+			t.Fatalf("CreateTaskQuestions: status=%d body=%s", w.Code, w.Body.String())
+		}
+		var out []QuestionResponse
+		if err := json.NewDecoder(w.Body).Decode(&out); err != nil {
+			t.Fatalf("decode CreateTaskQuestions response: %v", err)
+		}
+		return w.Code, out
+	}
+
+	firstTaskID := createTask(t)
+	code, first := createQuestions(t, firstTaskID, questionBody)
+	if code != http.StatusCreated || len(first) != 1 {
+		t.Fatalf("first create status=%d questions=%d", code, len(first))
+	}
+	if _, err := testHandler.Queries.AnswerAgentQuestion(context.Background(), db.AnswerAgentQuestionParams{
+		ID:                  parseUUID(first[0].ID),
+		AnswerOptionIndices: []byte("[1]"),
+		AnsweredByUserID:    parseUUID(testUserID),
+	}); err != nil {
+		t.Fatalf("answer first question: %v", err)
+	}
+
+	resumeTaskID := createTask(t)
+	code, reused := createQuestions(t, resumeTaskID, questionBody)
+	if code != http.StatusOK {
+		t.Fatalf("reuse status=%d, want 200", code)
+	}
+	if len(reused) != 1 {
+		t.Fatalf("reused questions=%d, want 1", len(reused))
+	}
+	if reused[0].ID != first[0].ID {
+		t.Fatalf("reused id=%s, want existing %s", reused[0].ID, first[0].ID)
+	}
+	if reused[0].TaskID != firstTaskID {
+		t.Fatalf("reused task_id=%s, want original task %s", reused[0].TaskID, firstTaskID)
+	}
+	if reused[0].Status != "answered" || len(reused[0].AnswerOptionIndices) != 1 || reused[0].AnswerOptionIndices[0] != 1 {
+		t.Fatalf("reused answered state = %#v", reused[0])
+	}
+
+	var count int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM agent_question
+		WHERE issue_id = $1 AND question = 'Which deployment target should I use?'
+	`, issueID).Scan(&count); err != nil {
+		t.Fatalf("count questions: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("matching question rows=%d, want 1", count)
+	}
+}
+
 func TestDaemonHeartbeat_WithDaemonToken_CrossWorkspace(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

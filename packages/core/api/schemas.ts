@@ -1,11 +1,14 @@
 import { z } from "zod";
 import type {
   Agent,
+  AgentQuestion,
   AgentTemplate,
   AgentTemplateSummary,
   Attachment,
   CreateAgentFromTemplateResponse,
   ListIssuesResponse,
+  PullRequest,
+  QuestionCountsResponse,
   Skill,
   TimelineEntry,
 } from "../types";
@@ -341,4 +344,123 @@ export const EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE: CreateAgentFromTemplateR
   agent: { id: "" } as Agent,
   imported_skill_ids: [],
   reused_skill_ids: [],
+};
+
+// ---------------------------------------------------------------------------
+// Agent question schemas — `GET /api/questions`, `GET /api/issues/:id/questions`,
+// etc. Status stays as `z.string()` so a new server-side enum value renders
+// the answered/cancelled fallback instead of white-screening the page.
+// ---------------------------------------------------------------------------
+const QuestionOptionSchema = z.object({
+  label: z.string().default(""),
+  description: z.string().optional(),
+}).loose();
+
+export const AgentQuestionSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  task_id: z.string(),
+  agent_id: z.string(),
+  issue_id: z.string().nullable().optional(),
+  header: z.string().default(""),
+  question: z.string().default(""),
+  options: z.array(QuestionOptionSchema).default([]),
+  multi_select: z.boolean().default(false),
+  status: z.string().default("pending"),
+  answer_option_indices: z.array(z.number()).optional(),
+  answer_custom_text: z.string().optional(),
+  answered_by_user_id: z.string().nullable().optional(),
+  answered_at: z.string().nullable().optional(),
+  created_at: z.string().default(""),
+}).loose();
+
+export const AgentQuestionListSchema = z.array(AgentQuestionSchema);
+
+export const QuestionCountsSchema = z.object({
+  total: z.number().default(0),
+  per_issue: z.array(
+    z.object({
+      issue_id: z.string(),
+      pending: z.number().default(0),
+    }).loose(),
+  ).default([]),
+}).loose();
+
+export const EMPTY_AGENT_QUESTION: AgentQuestion = {
+  id: "",
+  workspace_id: "",
+  task_id: "",
+  agent_id: "",
+  issue_id: null,
+  header: "",
+  question: "",
+  options: [],
+  multi_select: false,
+  status: "pending",
+  created_at: "",
+};
+
+export const EMPTY_AGENT_QUESTION_LIST: AgentQuestion[] = [];
+
+export const EMPTY_QUESTION_COUNTS: QuestionCountsResponse = {
+  total: 0,
+  per_issue: [],
+};
+
+// ---------------------------------------------------------------------------
+// Pull requests. Two sources (github | aone) share a single response shape;
+// the server is the authority on `source` so the client just passes it
+// through. State strings (`open` / `closed` / ...) are typed as `string` here
+// — a future server-side enum addition should fall through to the "unknown"
+// rendering rather than dropping the row.
+// ---------------------------------------------------------------------------
+
+export const PullRequestSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  source: z.string(),
+  repo_owner: z.string().nullable().optional(),
+  repo_name: z.string().nullable().optional(),
+  number: z.number().nullable().optional(),
+  title: z.string(),
+  state: z.string(),
+  html_url: z.string(),
+  branch: z.string().nullable().optional(),
+  author_login: z.string().nullable().optional(),
+  author_avatar_url: z.string().nullable().optional(),
+  merged_at: z.string().nullable().optional(),
+  closed_at: z.string().nullable().optional(),
+  pr_created_at: z.string().nullable().optional(),
+  pr_updated_at: z.string().nullable().optional(),
+}).loose();
+
+export const PullRequestListResponseSchema = z.object({
+  pull_requests: z.array(PullRequestSchema).default([]),
+}).loose();
+
+export const PullRequestLinkResponseSchema = z.object({
+  pull_request: PullRequestSchema,
+}).loose();
+
+export const EMPTY_PULL_REQUEST_LIST: { pull_requests: PullRequest[] } = {
+  pull_requests: [],
+};
+
+export const EMPTY_PULL_REQUEST: PullRequest = {
+  id: "",
+  workspace_id: "",
+  source: "github",
+  repo_owner: null,
+  repo_name: null,
+  number: null,
+  title: "",
+  state: "unknown",
+  html_url: "",
+  branch: null,
+  author_login: null,
+  author_avatar_url: null,
+  merged_at: null,
+  closed_at: null,
+  pr_created_at: null,
+  pr_updated_at: null,
 };

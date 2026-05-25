@@ -163,6 +163,9 @@ func (h *Handler) publishRevocation(ctx context.Context, result revocationResult
 	if h.TaskService != nil && len(result.CancelledTasks) > 0 {
 		h.TaskService.BroadcastCancelledTasks(ctx, result.CancelledTasks)
 	}
+	for _, t := range result.CancelledTasks {
+		h.deletePendingQuestionsForTask(ctx, t.ID)
+	}
 
 	for _, agent := range result.ArchivedAgents {
 		h.publish(protocol.EventAgentArchived, workspaceIDStr, actorType, actorIDStr, map[string]any{

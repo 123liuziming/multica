@@ -114,6 +114,11 @@ const (
 	EventDaemonRegister      = "daemon:register"
 	EventDaemonTaskAvailable = "daemon:task_available"
 
+	// Agent question events (AskUserQuestion tool intercepted by daemon hook)
+	EventQuestionCreated   = "question:created"
+	EventQuestionAnswered  = "question:answered"
+	EventQuestionCancelled = "question:cancelled"
+
 	// GitHub integration events
 	EventGitHubInstallationCreated = "github_installation:created"
 	EventGitHubInstallationDeleted = "github_installation:deleted"

@@ -5,9 +5,11 @@ import {
   Activity,
   BookOpenText,
   FileText,
+  HelpCircle,
   KeyRound,
   Terminal,
 } from "lucide-react";
+import { useAgentPendingQuestions } from "@multica/core/questions";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import {
   AlertDialog,
@@ -24,6 +26,7 @@ import { InstructionsTab } from "./tabs/instructions-tab";
 import { SkillsTab } from "./tabs/skills-tab";
 import { EnvTab } from "./tabs/env-tab";
 import { CustomArgsTab } from "./tabs/custom-args-tab";
+import { QuestionsTab } from "./tabs/questions-tab";
 import { useT } from "../../i18n";
 
 type DetailTab =
@@ -31,14 +34,19 @@ type DetailTab =
   | "instructions"
   | "skills"
   | "env"
-  | "custom_args";
+  | "custom_args"
+  | "questions";
 
-const TAB_LABEL_KEY: Record<DetailTab, "activity" | "instructions" | "skills" | "environment" | "custom_args"> = {
+const TAB_LABEL_KEY: Record<
+  DetailTab,
+  "activity" | "instructions" | "skills" | "environment" | "custom_args" | "questions"
+> = {
   activity: "activity",
   instructions: "instructions",
   skills: "skills",
   env: "environment",
   custom_args: "custom_args",
+  questions: "questions",
 };
 
 const detailTabs: {
@@ -50,6 +58,7 @@ const detailTabs: {
   { id: "skills", icon: BookOpenText },
   { id: "env", icon: KeyRound },
   { id: "custom_args", icon: Terminal },
+  { id: "questions", icon: HelpCircle },
 ];
 
 interface AgentOverviewPaneProps {
@@ -97,6 +106,8 @@ export function AgentOverviewPane({
     ? runtimes.find((r) => r.id === agent.runtime_id) ?? null
     : null;
 
+  const pendingQuestions = useAgentPendingQuestions(agent.id);
+
   const requestTabChange = (next: DetailTab) => {
     if (next === activeTab) return;
     if (activeDirty) {
@@ -136,6 +147,11 @@ export function AgentOverviewPane({
           >
             <tab.icon className="h-3.5 w-3.5" />
             {t(($) => $.tabs[TAB_LABEL_KEY[tab.id]])}
+            {tab.id === "questions" && pendingQuestions.length > 0 && (
+              <span className="ml-1 rounded-full bg-primary/15 px-1.5 text-[10px] font-medium text-primary">
+                {pendingQuestions.length}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -164,6 +180,11 @@ export function AgentOverviewPane({
               onSave={(updates) => onUpdate(agent.id, updates)}
               onDirtyChange={setActiveDirty}
             />
+          </TabContent>
+        )}
+        {activeTab === "questions" && (
+          <TabContent>
+            <QuestionsTab agent={agent} />
           </TabContent>
         )}
         {activeTab === "custom_args" && (

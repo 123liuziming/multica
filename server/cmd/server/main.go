@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/aone"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
@@ -274,6 +275,7 @@ func main() {
 	registerSubscriberListeners(bus, queries)
 	registerActivityListeners(bus, queries)
 	registerNotificationListeners(bus, queries, dingClient, ccClient)
+	registerQuestionCardListeners(bus, queries, ccClient)
 
 	metricsConfig := obsmetrics.ConfigFromEnv()
 	var metricsServer *http.Server
@@ -344,6 +346,22 @@ func main() {
 	go runAutopilotScheduler(autopilotCtx, queries, autopilotSvc)
 	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())
 	go runAoneSyncScheduler(autopilotCtx, queries, pool)
+	if os.Getenv("MULTICA_AONE_REFRESH_ENABLED") == "true" {
+		// Periodically re-enrich Aone PR rows via `a1`. Off by default so
+		// installs without `a1` on PATH don't burn cycles on lookups they
+		// can't satisfy.
+		go aone.RunRefreshLoop(autopilotCtx, queries, aone.RefreshOptions{
+			Publish: func(eventType, workspaceID, actorType, actorID string, payload any) {
+				bus.Publish(events.Event{
+					Type:        eventType,
+					WorkspaceID: workspaceID,
+					ActorType:   actorType,
+					ActorID:     actorID,
+					Payload:     payload,
+				})
+			},
+		})
+	}
 	go runDBStatsLogger(sweepCtx, pool)
 
 	if metricsServer != nil {

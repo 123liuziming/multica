@@ -1010,6 +1010,65 @@ func TestInjectRuntimeConfigRequiresExplicitCommentPost(t *testing.T) {
 	}
 }
 
+func TestInjectRuntimeConfigAskUserQuestionGuidanceIsClaudeOnly(t *testing.T) {
+	t.Parallel()
+
+	readConfig := func(t *testing.T, provider string, ctx TaskContextForEnv) string {
+		t.Helper()
+		dir := t.TempDir()
+		if _, err := InjectRuntimeConfig(dir, provider, ctx); err != nil {
+			t.Fatalf("InjectRuntimeConfig failed: %v", err)
+		}
+		file := "AGENTS.md"
+		if provider == "claude" {
+			file = "CLAUDE.md"
+		}
+		data, err := os.ReadFile(filepath.Join(dir, file))
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		return string(data)
+	}
+
+	baseCtx := TaskContextForEnv{IssueID: "issue-1"}
+	for _, tc := range []struct {
+		name     string
+		provider string
+		ctx      TaskContextForEnv
+	}{
+		{"claude disabled", "claude", baseCtx},
+		{"codex enabled flag ignored", "codex", TaskContextForEnv{IssueID: "issue-1", AllowAskUserQuestion: true}},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := readConfig(t, tc.provider, tc.ctx)
+			for _, forbidden := range []string{
+				"## Asking the User",
+				"The user only sees `AskUserQuestion` prompts and issue comments",
+			} {
+				if strings.Contains(s, forbidden) {
+					t.Fatalf("%s: unexpected AskUserQuestion guidance %q\n---\n%s", tc.name, forbidden, s)
+				}
+			}
+		})
+	}
+
+	enabled := readConfig(t, "claude", TaskContextForEnv{IssueID: "issue-1", AllowAskUserQuestion: true})
+	for _, want := range []string{
+		"## Asking the User",
+		"Use `AskUserQuestion` when all of these are true",
+		"Batch related blockers into one `AskUserQuestion` call",
+		"Do NOT use `AskUserQuestion` for durable communication",
+		"final results still MUST be delivered via `multica issue comment add`",
+		"The user only sees `AskUserQuestion` prompts and issue comments",
+	} {
+		if !strings.Contains(enabled, want) {
+			t.Errorf("enabled Claude config missing %q\n---\n%s", want, enabled)
+		}
+	}
+}
+
 // TestInjectRuntimeConfigAvailableCommandsIsNeutral pins that the global
 // Available Commands section lists the three input modes neutrally for
 // every non-Codex provider on every host OS, with no "MUST pipe via stdin"
@@ -2553,6 +2612,70 @@ func TestReadGCMeta_NoFile(t *testing.T) {
 	_, err := ReadGCMeta(dir)
 	if err == nil {
 		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestInjectProviderConfigAskUserQuestionHookHasThreeDayTimeout(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	settingsPath, err := InjectProviderConfig(dir, "", "claude", ProviderConfigOptions{
+		AllowAskUserQuestion: true,
+		DaemonPort:           19514,
+	})
+	if err != nil {
+		t.Fatalf("InjectProviderConfig failed: %v", err)
+	}
+	if settingsPath == "" {
+		t.Fatal("expected settings path")
+	}
+
+	raw, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		t.Fatalf("settings json: %v\n%s", err, string(raw))
+	}
+
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings hooks missing or wrong type: %#v", settings["hooks"])
+	}
+	pre, ok := hooks["PreToolUse"].([]any)
+	if !ok || len(pre) != 1 {
+		t.Fatalf("PreToolUse hooks = %#v", hooks["PreToolUse"])
+	}
+	entry, ok := pre[0].(map[string]any)
+	if !ok {
+		t.Fatalf("PreToolUse entry = %#v", pre[0])
+	}
+	if got := entry["matcher"]; got != "AskUserQuestion" {
+		t.Fatalf("matcher = %#v, want AskUserQuestion", got)
+	}
+	commands, ok := entry["hooks"].([]any)
+	if !ok || len(commands) != 1 {
+		t.Fatalf("entry hooks = %#v", entry["hooks"])
+	}
+	command, ok := commands[0].(map[string]any)
+	if !ok {
+		t.Fatalf("command hook = %#v", commands[0])
+	}
+	if got := command["timeout"]; got != float64(askUserHookTimeoutSeconds) {
+		t.Fatalf("hook timeout = %#v, want %d", got, askUserHookTimeoutSeconds)
+	}
+
+	scriptPath, ok := command["command"].(string)
+	if !ok || scriptPath == "" {
+		t.Fatalf("hook command = %#v", command["command"])
+	}
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read hook script: %v", err)
+	}
+	if !strings.Contains(string(script), "--max-time 259200") {
+		t.Fatalf("hook script missing 3-day curl timeout:\n%s", string(script))
 	}
 }
 

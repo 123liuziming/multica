@@ -1,1 +1,0 @@
-(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["object"==typeof document?document.currentScript:void 0,570466,t=>{"use strict";var e=t.i(705091),i=t.i(802276);t.i(298733);var o=t.i(633046);t.s(["default",0,function({params:t}){let{id:r}=(0,i.use)(t);return(0,e.jsx)(o.ProjectDetail,{projectId:r})}])}]);

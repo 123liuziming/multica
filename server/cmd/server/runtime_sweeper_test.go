@@ -5,10 +5,24 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/multica-ai/multica/server/internal/daemon"
 	"github.com/multica-ai/multica/server/internal/events"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestTaskSweeperTimeoutsCoverDefaultAgentTimeout(t *testing.T) {
+	runningTimeout := time.Duration(runningTimeoutSeconds * float64(time.Second))
+	if runningTimeout <= daemon.DefaultAgentTimeout {
+		t.Fatalf("running timeout %s must exceed default agent timeout %s", runningTimeout, daemon.DefaultAgentTimeout)
+	}
+
+	queuedTTL := time.Duration(queuedTTLSeconds * float64(time.Second))
+	if queuedTTL <= daemon.DefaultAgentTimeout {
+		t.Fatalf("queued TTL %s must exceed default agent timeout %s", queuedTTL, daemon.DefaultAgentTimeout)
+	}
+}
 
 // setupSweeperTestFixture creates an issue and a task in the given status with
 // timestamps old enough to trigger the sweeper. Returns (issueID, agentID, taskID).

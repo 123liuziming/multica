@@ -83,6 +83,7 @@ func InjectRuntimeConfig(workDir, provider string, ctx TaskContextForEnv) (strin
 // about the Multica runtime environment and available CLI tools.
 func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	var b strings.Builder
+	allowAskUserQuestion := provider == "claude" && ctx.AllowAskUserQuestion
 
 	b.WriteString("# Multica Agent Runtime\n\n")
 	b.WriteString("You are a coding agent in the Multica platform. Use the `multica` CLI to interact with the platform.\n\n")
@@ -299,6 +300,10 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		fmt.Fprintf(&b, "7. If blocked, run `multica issue status %s blocked` and post a comment explaining why\n\n", ctx.IssueID)
 	}
 
+	if allowAskUserQuestion {
+		writeAskUserQuestionGuidance(&b)
+	}
+
 	if len(ctx.AgentSkills) > 0 {
 		b.WriteString("## Skills\n\n")
 		switch provider {
@@ -362,9 +367,17 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("- On CLI failure, exit with the CLI error as the only output. The platform translates that into a `quick_create_failed` inbox item carrying the original prompt for the user.\n")
 	default:
 		if ctx.IsSquadLeader {
-			b.WriteString("⚠️ **Final results MUST be delivered via `multica issue comment add`** — unless your outcome is `no_action`. When you evaluate a trigger and decide no action is needed, calling `multica squad activity <issue-id> no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT post a comment that announces no_action, acknowledges another agent, or says you are exiting silently — such comments are noise. For all other outcomes (`action`, `failed`), a comment is still mandatory.\n\n")
+			if allowAskUserQuestion {
+				b.WriteString("⚠️ **The user only sees `AskUserQuestion` prompts and issue comments.** Terminal output, assistant chat text, and run logs are NOT delivered. Use `AskUserQuestion` only for blocking clarifications during the run; final outcomes still MUST be delivered via `multica issue comment add` unless your outcome is `no_action`. When you evaluate a trigger and decide no action is needed, calling `multica squad activity <issue-id> no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT post a comment that announces no_action, acknowledges another agent, or says you are exiting silently — such comments are noise. For all other outcomes (`action`, `failed`), a comment is still mandatory.\n\n")
+			} else {
+				b.WriteString("⚠️ **Final results MUST be delivered via `multica issue comment add`** — unless your outcome is `no_action`. When you evaluate a trigger and decide no action is needed, calling `multica squad activity <issue-id> no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT post a comment that announces no_action, acknowledges another agent, or says you are exiting silently — such comments are noise. For all other outcomes (`action`, `failed`), a comment is still mandatory.\n\n")
+			}
 		} else {
-			b.WriteString("⚠️ **Final results MUST be delivered via `multica issue comment add`.** The user does NOT see your terminal output, assistant chat text, or run logs — only comments on the issue. A task that finishes without a result comment is invisible to the user, even if the work itself was correct.\n\n")
+			if allowAskUserQuestion {
+				b.WriteString("⚠️ **The user only sees `AskUserQuestion` prompts and issue comments.** Terminal output, assistant chat text, and run logs are NOT delivered. Use `AskUserQuestion` only for blocking clarifications during the run; final results still MUST be delivered via `multica issue comment add`. A task that finishes without a result comment is invisible to the user, even if the work itself was correct.\n\n")
+			} else {
+				b.WriteString("⚠️ **Final results MUST be delivered via `multica issue comment add`.** The user does NOT see your terminal output, assistant chat text, or run logs — only comments on the issue. A task that finishes without a result comment is invisible to the user, even if the work itself was correct.\n\n")
+			}
 		}
 		b.WriteString("Keep comments concise and natural — state the outcome, not the process.\n")
 		b.WriteString("Good: \"Fixed the login redirect. PR: https://...\"\n")
@@ -373,4 +386,18 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	}
 
 	return b.String()
+}
+
+func writeAskUserQuestionGuidance(b *strings.Builder) {
+	b.WriteString("## Asking the User\n\n")
+	b.WriteString("You can use Claude Code's `AskUserQuestion` tool for synchronous clarification when a human answer is required before you can safely continue the current issue.\n\n")
+	b.WriteString("Use `AskUserQuestion` when all of these are true:\n\n")
+	b.WriteString("- You already read the issue, relevant comments, and available project/repository context.\n")
+	b.WriteString("- A specific missing decision or fact blocks the next substantive step.\n")
+	b.WriteString("- The user can answer with short options or a brief custom response.\n")
+	b.WriteString("- The answer will let you continue this run immediately.\n\n")
+	b.WriteString("Batch related blockers into one `AskUserQuestion` call instead of asking one at a time. Prefer concrete options with clear labels; include a custom-answer path when none of the options may fit.\n\n")
+	b.WriteString("Do NOT use `AskUserQuestion` for durable communication: final results, progress updates, handoffs, PR links, investigation notes, status changes, or explanations of why you are blocked. Those belong in `multica issue comment add`; if you are blocked after asking or cannot proceed without external work, also set the issue status to `blocked`.\n\n")
+	b.WriteString("Do NOT use `AskUserQuestion` for broad discussion, FYI notifications, requests for secrets, asking someone to perform an external task, or anything that should be preserved as part of the issue conversation. Use an issue comment for those.\n\n")
+	b.WriteString("After an `AskUserQuestion` answer lets you continue, finish the work normally and still post the final outcome as an issue comment.\n\n")
 }

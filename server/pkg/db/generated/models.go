@@ -20,27 +20,46 @@ type ActivityLog struct {
 }
 
 type Agent struct {
-	ID                 pgtype.UUID        `json:"id"`
-	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
-	Name               string             `json:"name"`
-	AvatarUrl          pgtype.Text        `json:"avatar_url"`
-	RuntimeMode        string             `json:"runtime_mode"`
-	RuntimeConfig      []byte             `json:"runtime_config"`
-	Visibility         string             `json:"visibility"`
-	Status             string             `json:"status"`
-	MaxConcurrentTasks int32              `json:"max_concurrent_tasks"`
-	OwnerID            pgtype.UUID        `json:"owner_id"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
-	Description        string             `json:"description"`
-	RuntimeID          pgtype.UUID        `json:"runtime_id"`
-	Instructions       string             `json:"instructions"`
-	ArchivedAt         pgtype.Timestamptz `json:"archived_at"`
-	ArchivedBy         pgtype.UUID        `json:"archived_by"`
-	CustomEnv          []byte             `json:"custom_env"`
-	CustomArgs         []byte             `json:"custom_args"`
-	McpConfig          []byte             `json:"mcp_config"`
-	Model              pgtype.Text        `json:"model"`
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	Name                 string             `json:"name"`
+	AvatarUrl            pgtype.Text        `json:"avatar_url"`
+	RuntimeMode          string             `json:"runtime_mode"`
+	RuntimeConfig        []byte             `json:"runtime_config"`
+	Visibility           string             `json:"visibility"`
+	Status               string             `json:"status"`
+	MaxConcurrentTasks   int32              `json:"max_concurrent_tasks"`
+	OwnerID              pgtype.UUID        `json:"owner_id"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	Description          string             `json:"description"`
+	RuntimeID            pgtype.UUID        `json:"runtime_id"`
+	Instructions         string             `json:"instructions"`
+	ArchivedAt           pgtype.Timestamptz `json:"archived_at"`
+	ArchivedBy           pgtype.UUID        `json:"archived_by"`
+	CustomEnv            []byte             `json:"custom_env"`
+	CustomArgs           []byte             `json:"custom_args"`
+	McpConfig            []byte             `json:"mcp_config"`
+	Model                pgtype.Text        `json:"model"`
+	AllowAskUserQuestion bool               `json:"allow_ask_user_question"`
+}
+
+type AgentQuestion struct {
+	ID                  pgtype.UUID        `json:"id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	TaskID              pgtype.UUID        `json:"task_id"`
+	AgentID             pgtype.UUID        `json:"agent_id"`
+	IssueID             pgtype.UUID        `json:"issue_id"`
+	Header              string             `json:"header"`
+	Question            string             `json:"question"`
+	Options             []byte             `json:"options"`
+	MultiSelect         bool               `json:"multi_select"`
+	Status              string             `json:"status"`
+	AnswerOptionIndices []byte             `json:"answer_option_indices"`
+	AnswerCustomText    pgtype.Text        `json:"answer_custom_text"`
+	AnsweredByUserID    pgtype.UUID        `json:"answered_by_user_id"`
+	AnsweredAt          pgtype.Timestamptz `json:"answered_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 }
 
 type AgentRuntime struct {
@@ -95,6 +114,26 @@ type AgentTaskQueue struct {
 	FailureReason     pgtype.Text        `json:"failure_reason"`
 	TriggerSummary    pgtype.Text        `json:"trigger_summary"`
 	ForceFreshSession bool               `json:"force_fresh_session"`
+}
+
+type AonePullRequest struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	HtmlUrl         string             `json:"html_url"`
+	Title           string             `json:"title"`
+	State           string             `json:"state"`
+	RepoOwner       pgtype.Text        `json:"repo_owner"`
+	RepoName        pgtype.Text        `json:"repo_name"`
+	PrNumber        pgtype.Int4        `json:"pr_number"`
+	AuthorLogin     pgtype.Text        `json:"author_login"`
+	AuthorAvatarUrl pgtype.Text        `json:"author_avatar_url"`
+	MergedAt        pgtype.Timestamptz `json:"merged_at"`
+	ClosedAt        pgtype.Timestamptz `json:"closed_at"`
+	PrCreatedAt     pgtype.Timestamptz `json:"pr_created_at"`
+	PrUpdatedAt     pgtype.Timestamptz `json:"pr_updated_at"`
+	LastEnrichedAt  pgtype.Timestamptz `json:"last_enriched_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Attachment struct {
@@ -339,6 +378,7 @@ type IssuePullRequest struct {
 	LinkedByType  pgtype.Text        `json:"linked_by_type"`
 	LinkedByID    pgtype.UUID        `json:"linked_by_id"`
 	LinkedAt      pgtype.Timestamptz `json:"linked_at"`
+	Source        string             `json:"source"`
 }
 
 type IssueReaction struct {
