@@ -3,6 +3,7 @@ package dingtalk
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -206,6 +207,9 @@ func enrichedInboxMetadata(ctx context.Context, q InboxRecipientLookup, item db.
 						meta["issue_url"] = url
 					}
 				}
+				if aoneURL := aoneIssueURL(ws, issue); aoneURL != "" {
+					meta["aone_issue_url"] = aoneURL
+				}
 			} else {
 				slog.Debug("dingtalk: lookup workspace for inbox metadata failed",
 					"workspace_id", formatUUID(item.WorkspaceID),
@@ -240,6 +244,26 @@ func issueURL(ws db.Workspace, identifier string) string {
 		return ""
 	}
 	return fmt.Sprintf("%s/%s/issues/%s", base, slug, identifier)
+}
+
+// aoneIssueURL constructs the Aone work item URL from the issue title's
+// [AONE-<id>] tag and the workspace's aone_project_id setting. Returns ""
+// when either piece is missing.
+func aoneIssueURL(ws db.Workspace, issue db.Issue) string {
+	aoneID := extractAoneID(issue.Title)
+	if aoneID == "" {
+		return ""
+	}
+	var settings map[string]any
+	if len(ws.Settings) > 0 {
+		_ = json.Unmarshal(ws.Settings, &settings)
+	}
+	projectID, _ := settings["aone_project_id"].(string)
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://project.aone.alibaba-inc.com/v2/project/%s/req/%s", projectID, aoneID)
 }
 
 // firstStatusLabel returns the first label whose name carries the "status:"

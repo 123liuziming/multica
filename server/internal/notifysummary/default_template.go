@@ -22,6 +22,8 @@ Cached issue context (do NOT re-fetch unless the context below is insufficient):
 - Status tag (no prefix): {{.IssueStatusTagShort}}
 - Created at: {{.IssueCreateTime}}
 - Elapsed: {{.IssueElapsed}}
+- Aone URL: {{.AoneIssueURL}}
+- Multica URL: {{.IssueURL}}
 - Linked pull/merge requests:
 {{.IssuePullRequests}}
 
@@ -33,7 +35,7 @@ Output EXACTLY the markdown structure below. Replace every [placeholder] with re
 
 ---BEGIN STRUCTURE---
 
-## {{.IssueIdentifier}} [{{.IssueTitle}}]({{.IssueURL}})
+## {{.IssueIdentifier}} [{{.IssueTitle}}]({{.AoneIssueURL}})
 
 [一句话摘要]
 

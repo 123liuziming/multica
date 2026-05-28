@@ -206,7 +206,8 @@ function numberOr(raw: string, fallback: number): number {
 
 const VARIABLE_HINTS: { name: string; desc: string }[] = [
   { name: "IssueIdentifier", desc: "PREFIX-NN (e.g. ACME-101)" },
-  { name: "IssueURL", desc: "Full workspace-scoped URL" },
+  { name: "IssueURL", desc: "Multica workspace URL" },
+  { name: "AoneIssueURL", desc: "Aone work item URL (from [AONE-ID] + aone_project_id)" },
   { name: "IssueTitle", desc: "Issue title" },
   { name: "IssueStatus", desc: "DB status (todo/in_progress/…)" },
   { name: "IssueStatusTag", desc: "First label with status: prefix" },

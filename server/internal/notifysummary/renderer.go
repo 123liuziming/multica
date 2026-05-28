@@ -35,6 +35,7 @@ type TemplateData struct {
 	IssueID             string
 	IssueIdentifier     string
 	IssueURL            string
+	AoneIssueURL        string
 	IssueTitle          string
 	IssueStatus         string
 	IssueStatusTag      string
@@ -75,6 +76,7 @@ func BuildTemplateData(batch []QueuedNotification, settings Settings, staffID, s
 		IssueID:             latestMetadataValue(batch, "issue_id"),
 		IssueIdentifier:     latestMetadataValue(batch, "issue_identifier"),
 		IssueURL:            latestMetadataValue(batch, "issue_url"),
+		AoneIssueURL:        latestMetadataValue(batch, "aone_issue_url"),
 		IssueTitle:          issueTitle,
 		IssueStatus:         latestMetadataValue(batch, "issue_status"),
 		IssueStatusTag:      statusTag,
