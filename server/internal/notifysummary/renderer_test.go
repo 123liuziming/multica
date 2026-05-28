@@ -76,8 +76,7 @@ func TestRender_DefaultTemplateProducesCardStructure(t *testing.T) {
 	wantSubstrings := []string{
 		"## SHUIZHAO-GH-7 [示例 issue]()",
 		"| Issue 状态 | 任务状态 | 已运行时间 |",
-		"⏱2 天 3 小时",
-		"[ISSUE_STATUS_CELL]",
+		"| in_progress | code-review | ⏱2 天 3 小时 |",
 		"## 最新进展",
 		"Notification context:",
 		"linked PR https://example.com/pr/1",
