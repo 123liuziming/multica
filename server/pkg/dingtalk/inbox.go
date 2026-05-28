@@ -74,70 +74,86 @@ func PushInbox(ctx context.Context, client *Client, ccClient *CCConnectClient, d
 	settings := workspaceNotifySummarySettings(ctx, q, item)
 	var skipUserID string
 
+	var dingUserID string
 	user, err := q.GetUser(ctx, item.RecipientID)
 	if err != nil {
 		slog.Warn("dingtalk: lookup recipient failed",
 			"inbox_type", item.Type,
 			"error", err)
-	} else if userID, ok := UserIDFromAlibabaEmail(user.Email); ok {
-		skipUserID = userID
-
-		useSummary := settings.Enabled && dispatcher != nil && ccClient.Enabled() && item.IssueID.Valid
-
-		go func(dt *Client, cc *CCConnectClient, disp SummaryDispatcher, dingUserID, title, md, inboxType string, meta map[string]string, summary bool, s notifysummary.Settings, it db.InboxItem) {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-
-			if summary {
-				// Summary path: send to /notify with notify_user=false so only
-				// the Aone comment fires, then enqueue for the summary bucket.
-				// On Aone-leg failure, fall back to the direct push so the
-				// user isn't left without any signal.
-				if err := cc.SendNotification(ctx, dingUserID, title, md, meta, false); err == nil {
-					disp.Enqueue(dingUserID, formatUUID(it.IssueID), s, notifysummary.QueuedNotification{
-						Platform:   "dingtalk",
-						UserID:     dingUserID,
-						Title:      title,
-						Content:    md,
-						Metadata:   meta,
-						ReceivedAt: time.Now(),
-					})
-					return
-				} else {
-					slog.Warn("dingtalk: summary-path /notify (notify_user=false) failed, falling back to direct",
-						"ding_user_id", dingUserID,
-						"inbox_type", inboxType,
-						"error", err)
-					// Fall through to direct push below.
-				}
-			}
-
-			// Direct path: cc-connect first (stores reply context), then
-			// fall back to raw DingTalk API.
-			if cc.Enabled() {
-				if err := cc.SendNotification(ctx, dingUserID, title, md, meta, true); err != nil {
-					slog.Warn("dingtalk: push inbox via cc-connect failed, falling back to direct",
-						"ding_user_id", dingUserID,
-						"inbox_type", inboxType,
-						"error", err)
-				} else {
-					return
-				}
-			}
-
-			if dt.Enabled() {
-				if err := dt.BatchSendOTOMarkdown(ctx, []string{dingUserID}, title, md); err != nil {
-					slog.Warn("dingtalk: push inbox failed",
-						"ding_user_id", dingUserID,
-						"inbox_type", inboxType,
-						"error", err)
-				}
-			}
-		}(client, ccClient, dispatcher, userID, item.Title, markdown, item.Type, meta, useSummary, settings, item)
-	} else {
-		slog.Debug("dingtalk: skipping non-alibaba email",
-			"inbox_type", item.Type)
+	} else if uid, ok := UserIDFromAlibabaEmail(user.Email); ok {
+		dingUserID = uid
+		skipUserID = uid
 	}
+
+	// Resolve summary target: Aone assignedTo first, then email prefix.
+	summaryEnabled := settings.Enabled && dispatcher != nil && ccClient.Enabled() && item.IssueID.Valid
+	summaryStaffID := ""
+	if summaryEnabled {
+		summaryStaffID = resolveSummaryStaffID(ctx, item.Title, dingUserID)
+		if summaryStaffID == "" {
+			slog.Debug("dingtalk: summary skipped, no staff ID resolved",
+				"inbox_type", item.Type, "title", item.Title)
+			summaryEnabled = false
+		} else if skipUserID == "" {
+			skipUserID = summaryStaffID
+		}
+	}
+
+	go func(dt *Client, cc *CCConnectClient, disp SummaryDispatcher, dingUserID, summaryStaffID, title, md, inboxType string, meta map[string]string, summary bool, s notifysummary.Settings, it db.InboxItem) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if summary {
+			notifyUserID := dingUserID
+			if notifyUserID == "" {
+				notifyUserID = summaryStaffID
+			}
+			if err := cc.SendNotification(ctx, notifyUserID, title, md, meta, false); err == nil {
+				disp.Enqueue(summaryStaffID, formatUUID(it.IssueID), s, notifysummary.QueuedNotification{
+					Platform:   "dingtalk",
+					UserID:     summaryStaffID,
+					Title:      title,
+					Content:    md,
+					Metadata:   meta,
+					ReceivedAt: time.Now(),
+				})
+				if dingUserID == "" {
+					return
+				}
+			} else {
+				slog.Warn("dingtalk: summary-path /notify (notify_user=false) failed, falling back to direct",
+					"ding_user_id", notifyUserID,
+					"inbox_type", inboxType,
+					"error", err)
+			}
+		}
+
+		if dingUserID == "" {
+			return
+		}
+
+		// Direct path: cc-connect first (stores reply context), then
+		// fall back to raw DingTalk API.
+		if cc.Enabled() {
+			if err := cc.SendNotification(ctx, dingUserID, title, md, meta, true); err != nil {
+				slog.Warn("dingtalk: push inbox via cc-connect failed, falling back to direct",
+					"ding_user_id", dingUserID,
+					"inbox_type", inboxType,
+					"error", err)
+			} else {
+				return
+			}
+		}
+
+		if dt.Enabled() {
+			if err := dt.BatchSendOTOMarkdown(ctx, []string{dingUserID}, title, md); err != nil {
+				slog.Warn("dingtalk: push inbox failed",
+					"ding_user_id", dingUserID,
+					"inbox_type", inboxType,
+					"error", err)
+			}
+		}
+	}(client, ccClient, dispatcher, dingUserID, summaryStaffID, item.Title, markdown, item.Type, meta, summaryEnabled, settings, item)
 
 	pushAoneLinkedTargets(ctx, client, ccClient, item, skipUserID, meta)
 }

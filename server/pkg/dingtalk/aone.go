@@ -29,6 +29,81 @@ var aoneMirrorDedup = struct {
 	seen map[string]time.Time
 }{seen: make(map[string]time.Time)}
 
+const aoneAssigneeCacheTTL = time.Hour
+
+type aoneAssigneeCacheEntry struct {
+	staffIDs []string
+	ts       time.Time
+}
+
+var aoneAssigneeCache = struct {
+	sync.Mutex
+	entries map[string]aoneAssigneeCacheEntry
+}{entries: make(map[string]aoneAssigneeCacheEntry)}
+
+func lookupAoneAssigneeCache(aoneID string) (ids []string, found bool) {
+	aoneAssigneeCache.Lock()
+	defer aoneAssigneeCache.Unlock()
+	if e, ok := aoneAssigneeCache.entries[aoneID]; ok && time.Since(e.ts) < aoneAssigneeCacheTTL {
+		return e.staffIDs, true
+	}
+	return nil, false
+}
+
+func storeAoneAssigneeCache(aoneID string, staffIDs []string) {
+	if len(staffIDs) == 0 {
+		return
+	}
+	aoneAssigneeCache.Lock()
+	defer aoneAssigneeCache.Unlock()
+	aoneAssigneeCache.entries[aoneID] = aoneAssigneeCacheEntry{staffIDs: staffIDs, ts: time.Now()}
+	for k, e := range aoneAssigneeCache.entries {
+		if time.Since(e.ts) > aoneAssigneeCacheTTL {
+			delete(aoneAssigneeCache.entries, k)
+		}
+	}
+}
+
+func cachedAoneAssigneeStaffIDs(ctx context.Context, aoneID string) ([]string, bool) {
+	if ids, found := lookupAoneAssigneeCache(aoneID); found {
+		slog.Debug("dingtalk: aone assignee cache hit", "aone_id", aoneID, "staff_ids", ids)
+		return ids, len(ids) > 0
+	}
+	info, err := fetchAoneMirrorInfo(ctx, aoneID)
+	if err != nil {
+		slog.Warn("dingtalk: fetch aone assignee for cache failed", "aone_id", aoneID, "error", err)
+		return nil, false
+	}
+	ids := resolveAoneAssigneeDingUserIDs(ctx, info.Assignee)
+	slog.Info("dingtalk: resolved aone assignee staff IDs", "aone_id", aoneID, "assignee", info.Assignee, "staff_ids", ids)
+	storeAoneAssigneeCache(aoneID, ids)
+	return ids, len(ids) > 0
+}
+
+func resolveSummaryStaffID(ctx context.Context, title, fallback string) string {
+	aoneID := extractAoneID(title)
+	if aoneID == "" {
+		return fallback
+	}
+	if ids, ok := cachedAoneAssigneeStaffIDs(ctx, aoneID); ok {
+		return ids[0]
+	}
+	return fallback
+}
+
+// ResolveAoneAssigneeStaffIDs returns the DingTalk staff IDs for the Aone
+// issue referenced in title (e.g. "[AONE-12345] ..."). Uses the 1-hour
+// in-memory cache. Returns nil when the title has no Aone tag or the
+// assignee cannot be resolved.
+func ResolveAoneAssigneeStaffIDs(ctx context.Context, title string) []string {
+	aoneID := extractAoneID(title)
+	if aoneID == "" {
+		return nil
+	}
+	ids, _ := cachedAoneAssigneeStaffIDs(ctx, aoneID)
+	return ids
+}
+
 func pushAoneLinkedTargets(ctx context.Context, client *Client, ccClient *CCConnectClient, item db.InboxItem, skipUserID string, meta map[string]string) {
 	if !client.Enabled() && !ccClient.Enabled() {
 		return
@@ -52,7 +127,10 @@ func pushAoneLinkedTargets(ctx context.Context, client *Client, ccClient *CCConn
 			return
 		}
 
-		for _, userID := range resolveAoneAssigneeDingUserIDs(ctx, info.Assignee) {
+		userIDs := resolveAoneAssigneeDingUserIDs(ctx, info.Assignee)
+		storeAoneAssigneeCache(aoneID, userIDs)
+
+		for _, userID := range userIDs {
 			if userID == "" || userID == skipUserID {
 				continue
 			}
@@ -168,7 +246,7 @@ func resolveAoneAssigneeDingUserIDs(ctx context.Context, assignee string) []stri
 		slog.Warn("dingtalk: resolve aone assignee failed", "assignee", assignee, "error", err, "output", strings.TrimSpace(string(out)))
 		return nil
 	}
-	for _, id := range extractStaffDingUserIDs(out) {
+	for _, id := range extractStaffDingUserIDs(out, assignee) {
 		ids[id] = true
 	}
 	return sortedKeys(ids)
@@ -179,7 +257,7 @@ var (
 	numericIDRe = regexp.MustCompile(`\b\d{4,}\b`)
 )
 
-func extractStaffDingUserIDs(raw []byte) []string {
+func extractStaffDingUserIDs(raw []byte, matchNickname string) []string {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var data any
@@ -189,17 +267,11 @@ func extractStaffDingUserIDs(raw []byte) []string {
 
 	ids := map[string]bool{}
 	for _, rec := range firstStaffRecords(data) {
-		for _, v := range rec {
-			s, ok := v.(string)
-			if !ok {
+		if matchNickname != "" {
+			nick, _ := rec["nickname"].(string)
+			if nick != matchNickname {
 				continue
 			}
-			if id, ok := UserIDFromAlibabaEmail(s); ok {
-				ids[id] = true
-			}
-		}
-		if len(ids) > 0 {
-			return sortedKeys(ids)
 		}
 		for k, v := range rec {
 			s, ok := v.(string)
@@ -211,10 +283,14 @@ func extractStaffDingUserIDs(raw []byte) []string {
 				if strings.HasPrefix(s, "WORKER_") {
 					continue
 				}
-				ids[s] = true
+				if numericIDRe.MatchString(s) {
+					ids[s] = true
+				}
 			}
 		}
-		break
+		if len(ids) > 0 {
+			break
+		}
 	}
 	return sortedKeys(ids)
 }

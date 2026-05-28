@@ -109,6 +109,30 @@ func sendIssueQuestionCards(ctx context.Context, queries *db.Queries, cc *dingta
 		return
 	}
 
+	if aoneStaffIDs := dingtalk.ResolveAoneAssigneeStaffIDs(ctx, issue.Title); len(aoneStaffIDs) > 0 {
+		for _, dingUserID := range aoneStaffIDs {
+			req := buildQuestionCardRequest(question, issue, issueIdentifier, questionURL, agentName, "", dingUserID, "")
+			sendCtx, cancel := context.WithTimeout(ctx, questionCardSendTimeout)
+			err := cc.SendQuestionCard(sendCtx, req)
+			cancel()
+			if err != nil {
+				slog.Warn("question card: cc-connect send to aone assignee failed",
+					"workspace_id", question.WorkspaceID,
+					"issue_id", issueID,
+					"question_id", question.ID,
+					"ding_user_id", dingUserID,
+					"error", err)
+				continue
+			}
+			slog.Info("question card: sent to aone assignee via cc-connect",
+				"workspace_id", question.WorkspaceID,
+				"issue_id", issueID,
+				"question_id", question.ID,
+				"ding_user_id", dingUserID)
+		}
+		return
+	}
+
 	subscribers, err := queries.ListIssueSubscribers(ctx, parseUUID(issueID))
 	if err != nil {
 		slog.Warn("question card: failed to list issue subscribers", "issue_id", issueID, "question_id", question.ID, "error", err)
