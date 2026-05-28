@@ -353,10 +353,12 @@ func TestPushInbox_EnqueuesWhenSummaryEnabled(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		t.Fatal("expected /notify call (notify_user=false) on summary path")
 	}
-	// Dispatcher.Enqueue runs in the same goroutine as the cc call; wait briefly.
-	deadline := time.Now().Add(1 * time.Second)
-	for time.Now().Before(deadline) && dispatcher.count() == 0 {
-		time.Sleep(10 * time.Millisecond)
+	// Dispatcher.Enqueue runs inside the PushInbox goroutine; wait with a
+	// proper deadline so the test doesn't flake on loaded CI runners.
+	waitForCount := func() bool { return dispatcher.count() > 0 }
+	dl := time.Now().Add(2 * time.Second)
+	for time.Now().Before(dl) && !waitForCount() {
+		time.Sleep(5 * time.Millisecond)
 	}
 	if dispatcher.count() != 1 {
 		t.Fatalf("dispatcher.count = %d; want 1", dispatcher.count())

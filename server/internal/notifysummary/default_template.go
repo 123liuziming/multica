@@ -27,6 +27,7 @@ Allowed tool calls to get detailed information:
 
 Hard constraints:
 - All text in Chinese except identifiers, URLs, and the status tag line.
+- "最新进展" section: at most 3 items. Focus on concrete actions and outcomes (user feedback, agent actions, PR/MR activity). Do NOT include issue status transitions (e.g. "状态从 todo 变为 in_progress") — those are already shown in the table.
 - No preamble, no greeting, no meta commentary — only the templated output.
 
 Notification context:

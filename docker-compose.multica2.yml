@@ -36,6 +36,8 @@ services:
     environment:
       TZ: Asia/Shanghai
       CC_CONNECT_SOCKET: ${CC_CONNECT_SOCKET:-/cc-connect-run/api.sock}
+      # CC_CONNECT_NOTIFY_ENDPOINT removed — notify-summary is now per-workspace
+      # (toggle via Settings → Notify Summary in the web UI, not via env).
       DATABASE_URL: postgres://${POSTGRES_USER:-multica}:${POSTGRES_PASSWORD:-multica}@postgres:5432/${POSTGRES_DB:-multica2}?sslmode=disable
       PORT: "8080"
       JWT_SECRET: ${JWT_SECRET}

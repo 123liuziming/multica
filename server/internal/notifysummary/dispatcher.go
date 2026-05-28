@@ -127,13 +127,15 @@ func (d *Dispatcher) flush(key, reason string) {
 	if len(b.notifications) == 0 {
 		return
 	}
-	d.deliver(b, reason)
+	d.deliver(b, reason, false)
 }
 
-// deliver renders the prompt and calls the injector with a fresh 30 s
-// context (the originating http handler ctx is long gone by the time a
-// timer fires).
-func (d *Dispatcher) deliver(b *bucket, reason string) {
+// deliver renders the prompt and fires the injection. When sync is false
+// (normal timer path), the HTTP POST is fire-and-forget — we don't block on
+// cc-connect's agent turn. When sync is true (graceful shutdown drain), we
+// block so Stop() can guarantee all pending buckets have been submitted
+// before the process exits.
+func (d *Dispatcher) deliver(b *bucket, reason string, sync bool) {
 	data := BuildTemplateData(b.notifications, b.settings, b.staffID, b.sessionKey, d.now())
 	prompt, err := Render(b.settings.Template, data)
 	if err != nil {
@@ -141,15 +143,25 @@ func (d *Dispatcher) deliver(b *bucket, reason string) {
 			"staff_id", b.staffID, "issue_id", b.issueID, "count", len(b.notifications), "reason", reason, "error", err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.injector.SendSessionPrompt(ctx, b.staffID, prompt); err != nil {
-		slog.Warn("notify-summary: inject failed, dropping bucket",
-			"staff_id", b.staffID, "issue_id", b.issueID, "count", len(b.notifications), "reason", reason, "error", err)
-		return
+	staffID := b.staffID
+	issueID := b.issueID
+	count := len(b.notifications)
+	send := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := d.injector.SendSessionPrompt(ctx, staffID, prompt); err != nil {
+			slog.Warn("notify-summary: inject failed",
+				"staff_id", staffID, "issue_id", issueID, "count", count, "reason", reason, "error", err)
+			return
+		}
+		slog.Info("notify-summary: prompt injected",
+			"staff_id", staffID, "issue_id", issueID, "count", count, "reason", reason)
 	}
-	slog.Info("notify-summary: prompt injected",
-		"staff_id", b.staffID, "issue_id", b.issueID, "count", len(b.notifications), "reason", reason)
+	if sync {
+		send()
+	} else {
+		go send()
+	}
 }
 
 // Stop drains every pending bucket synchronously then signals completion.
@@ -175,7 +187,7 @@ func (d *Dispatcher) Stop() {
 			if len(b.notifications) == 0 {
 				continue
 			}
-			d.deliver(b, "shutdown")
+			d.deliver(b, "shutdown", true)
 		}
 		close(d.stopCh)
 		close(d.doneCh)
