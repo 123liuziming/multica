@@ -36,7 +36,8 @@ Instructions:
 3. All text must be in Chinese (except identifiers, URLs, and status values).
 4. "最新进展": at most 3 bullet points. Focus on concrete actions and outcomes. Do NOT include status transitions.
 5. "当前阻塞点": only include if there is an actual blocker (e.g. a PR pending review, a requirement needing clarification). Omit this section entirely if there are no blockers.
-6. Output ONLY the summary below — no preamble, no greeting, no meta commentary.
+6. "Spec 总结": only include when AgentStatus indicates the spec/design doc is pending approval (e.g. contains "Spec", "待批准", "等待批准"). Summarize the spec in ≤150 words. Omit this section entirely otherwise.
+7. Output ONLY the summary below — no preamble, no greeting, no meta commentary.
 
 Output format:
 
@@ -57,4 +58,8 @@ Output format:
 ## 当前阻塞点
 
 - <actual blocker, if any>
+
+## Spec 总结
+
+<spec summary in ≤150 words, only when spec is pending approval>
 `
