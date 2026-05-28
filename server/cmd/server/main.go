@@ -259,14 +259,19 @@ func main() {
 		AppSecret: os.Getenv("DINGTALK_APP_SECRET"),
 		RobotCode: os.Getenv("DINGTALK_ROBOT_CODE"),
 	})
-	ccClient := dingtalk.NewCCConnectClient(os.Getenv("CC_CONNECT_SOCKET"))
+	ccClient := dingtalk.NewCCConnectClientWithConfig(dingtalk.CCConnectConfig{
+		SocketPath:     os.Getenv("CC_CONNECT_SOCKET"),
+		NotifyEndpoint: os.Getenv("CC_CONNECT_NOTIFY_ENDPOINT"),
+	})
 	if dingClient.Enabled() {
 		slog.Info("dingtalk: inbox push enabled")
 	} else {
 		slog.Info("dingtalk: inbox push disabled (DINGTALK_APP_KEY/SECRET/ROBOT_CODE not all set)")
 	}
 	if ccClient.Enabled() {
-		slog.Info("dingtalk: cc-connect relay enabled", "socket", os.Getenv("CC_CONNECT_SOCKET"))
+		slog.Info("dingtalk: cc-connect relay enabled",
+			"socket", os.Getenv("CC_CONNECT_SOCKET"),
+			"notify_endpoint", ccClient.NotifyEndpointPath())
 	}
 
 	// Order matters: subscriber listeners must register BEFORE notification listeners.

@@ -53,9 +53,12 @@ func TestCCConnectSendNotificationIncludesMetadata(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err = c.SendNotification(ctx, "123456", "Issue updated", "markdown body", map[string]string{
-		"workspace_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-		"issue_id":     "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-		"inbox_type":   "status_changed",
+		"workspace_id":      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		"issue_id":          "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+		"issue_title":       "Fix deploy",
+		"issue_status":      "in_progress",
+		"issue_create_time": "2026-05-27T01:30:00Z",
+		"inbox_type":        "status_changed",
 	})
 	if err != nil {
 		t.Fatalf("SendNotification: %v", err)
@@ -75,8 +78,113 @@ func TestCCConnectSendNotificationIncludesMetadata(t *testing.T) {
 		if req.Metadata["inbox_type"] != "status_changed" {
 			t.Errorf("inbox_type metadata = %q", req.Metadata["inbox_type"])
 		}
+		if req.Metadata["issue_title"] != "Fix deploy" || req.Metadata["issue_status"] != "in_progress" || req.Metadata["issue_create_time"] != "2026-05-27T01:30:00Z" {
+			t.Errorf("issue metadata = %#v", req.Metadata)
+		}
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for request")
+	}
+}
+
+func TestCCConnectSendNotificationCanUseNotifySessionEndpoint(t *testing.T) {
+	socketPath := ccConnectTestSocketPath(t)
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen unix socket: %v", err)
+	}
+	seenCh := make(chan notifyRequest, 1)
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/notify-session" {
+			t.Errorf("path = %q; want /notify-session", r.URL.Path)
+		}
+		var req notifyRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		seenCh <- req
+		w.WriteHeader(http.StatusOK)
+	})}
+	go func() {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			t.Errorf("serve unix socket: %v", err)
+		}
+	}()
+	defer srv.Close()
+
+	c := NewCCConnectClientWithConfig(CCConnectConfig{
+		SocketPath:     socketPath,
+		NotifyEndpoint: "notify-session",
+	})
+	if !c.UsesNotifySessionEndpoint() {
+		t.Fatal("client should report notify-session endpoint")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err = c.SendNotification(ctx, "123456", "Issue updated", "markdown body", map[string]string{
+		"workspace_id":      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		"issue_id":          "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+		"issue_title":       "Fix deploy",
+		"issue_status":      "in_progress",
+		"issue_create_time": "2026-05-27T01:30:00Z",
+		"inbox_type":        "status_changed",
+	})
+	if err != nil {
+		t.Fatalf("SendNotification: %v", err)
+	}
+
+	select {
+	case req := <-seenCh:
+		if req.Platform != "dingtalk" || req.UserID != "123456@alibaba-inc.com" || req.Title != "Issue updated" || req.Content != "markdown body" {
+			t.Fatalf("request = %#v", req)
+		}
+		if req.Metadata["issue_id"] != "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" || req.Metadata["issue_title"] != "Fix deploy" || req.Metadata["issue_status"] != "in_progress" || req.Metadata["issue_create_time"] != "2026-05-27T01:30:00Z" {
+			t.Errorf("metadata = %#v", req.Metadata)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for request")
+	}
+}
+
+func TestEnsureAlibabaEmail(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"1001", "1001@alibaba-inc.com"},
+		{"1001@alibaba-inc.com", "1001@alibaba-inc.com"},
+		{" 1001 ", "1001@alibaba-inc.com"},
+		{"someone@example.com", "someone@example.com"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := ensureAlibabaEmail(tt.in); got != tt.want {
+			t.Fatalf("ensureAlibabaEmail(%q) = %q; want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestNormalizeNotifyEndpoint(t *testing.T) {
+	tests := []struct {
+		in     string
+		want   string
+		wantOK bool
+	}{
+		{"", "/notify", true},
+		{"notify", "/notify", true},
+		{"/notify", "/notify", true},
+		{"notify-session", "/notify-session", true},
+		{"/notify-session", "/notify-session", true},
+		{"session", "/notify-session", true},
+		{"bad", "/notify", false},
+	}
+	for _, tt := range tests {
+		got, ok := NormalizeNotifyEndpoint(tt.in)
+		if got != tt.want || ok != tt.wantOK {
+			t.Fatalf("NormalizeNotifyEndpoint(%q) = (%q, %v); want (%q, %v)", tt.in, got, ok, tt.want, tt.wantOK)
+		}
 	}
 }
 

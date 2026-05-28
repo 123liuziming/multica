@@ -19,6 +19,10 @@ type InboxRecipientLookup interface {
 	GetUser(ctx context.Context, id pgtype.UUID) (db.User, error)
 }
 
+type InboxIssueLookup interface {
+	GetIssue(ctx context.Context, id pgtype.UUID) (db.Issue, error)
+}
+
 // PushInbox best-effort mirrors an inbox item to the recipient's 1:1 DingTalk
 // chat. When a CCConnectClient is provided and enabled, the notification is
 // routed through cc-connect so it can store context for reply detection.
@@ -35,8 +39,13 @@ func PushInbox(ctx context.Context, client *Client, ccClient *CCConnectClient, q
 	if !client.Enabled() && !ccClient.Enabled() {
 		return
 	}
+	if ccClient.UsesNotifySessionEndpoint() && !item.IssueID.Valid {
+		slog.Debug("dingtalk: skipping non-issue inbox for notify-session",
+			"inbox_type", item.Type)
+		return
+	}
 	markdown := BuildInboxMarkdown(item)
-	meta := inboxMetadata(item)
+	meta := enrichedInboxMetadata(ctx, q, item)
 	var skipUserID string
 
 	user, err := q.GetUser(ctx, item.RecipientID)
@@ -78,7 +87,32 @@ func PushInbox(ctx context.Context, client *Client, ccClient *CCConnectClient, q
 			"inbox_type", item.Type)
 	}
 
-	pushAoneLinkedTargets(ctx, client, ccClient, item, skipUserID)
+	pushAoneLinkedTargets(ctx, client, ccClient, item, skipUserID, meta)
+}
+
+func enrichedInboxMetadata(ctx context.Context, q InboxRecipientLookup, item db.InboxItem) map[string]string {
+	meta := inboxMetadata(item)
+	if issueLookup, ok := q.(InboxIssueLookup); ok && item.IssueID.Valid {
+		if issue, err := issueLookup.GetIssue(ctx, item.IssueID); err == nil {
+			if issue.Title != "" {
+				meta["issue_title"] = issue.Title
+			}
+			if issue.Status != "" {
+				meta["issue_status"] = issue.Status
+			}
+			if issue.CreatedAt.Valid {
+				meta["issue_create_time"] = issue.CreatedAt.Time.UTC().Format(time.RFC3339)
+			}
+		} else {
+			slog.Debug("dingtalk: lookup issue for inbox metadata failed",
+				"issue_id", formatUUID(item.IssueID),
+				"error", err)
+		}
+	}
+	if item.IssueID.Valid && meta["issue_title"] == "" && item.Title != "" {
+		meta["issue_title"] = item.Title
+	}
+	return meta
 }
 
 // BuildInboxMarkdown renders a Multica inbox item as a DingTalk

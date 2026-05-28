@@ -1,8 +1,13 @@
 package dingtalk
 
 import (
+	"context"
+	"encoding/json"
+	"net"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -91,6 +96,140 @@ func TestInboxMetadataIncludesReplyContext(t *testing.T) {
 		if got[k] != v {
 			t.Errorf("metadata[%q] = %q; want %q", k, got[k], v)
 		}
+	}
+}
+
+type fakeInboxMetadataLookup struct {
+	user  db.User
+	issue db.Issue
+}
+
+func (f fakeInboxMetadataLookup) GetUser(context.Context, pgtype.UUID) (db.User, error) {
+	return f.user, nil
+}
+
+func (f fakeInboxMetadataLookup) GetIssue(context.Context, pgtype.UUID) (db.Issue, error) {
+	return f.issue, nil
+}
+
+func TestEnrichedInboxMetadataIncludesIssueFields(t *testing.T) {
+	createdAt := time.Date(2026, 5, 27, 9, 30, 0, 0, time.FixedZone("CST", 8*60*60))
+	issueID := makeTestUUID(0xbb)
+	item := db.InboxItem{
+		WorkspaceID: makeTestUUID(0xaa),
+		IssueID:     issueID,
+		Title:       "Notification title",
+		Type:        "status_changed",
+	}
+	got := enrichedInboxMetadata(context.Background(), fakeInboxMetadataLookup{
+		issue: db.Issue{
+			ID:        issueID,
+			Title:     "Fix deploy",
+			Status:    "in_progress",
+			CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
+		},
+	}, item)
+
+	if got["issue_title"] != "Fix deploy" {
+		t.Errorf("issue_title metadata = %q; want Fix deploy", got["issue_title"])
+	}
+	if got["issue_status"] != "in_progress" {
+		t.Errorf("issue_status metadata = %q; want in_progress", got["issue_status"])
+	}
+	if got["issue_create_time"] != "2026-05-27T01:30:00Z" {
+		t.Errorf("issue_create_time metadata = %q", got["issue_create_time"])
+	}
+}
+
+func TestPushInboxSkipsNonIssueWhenNotifySessionEndpoint(t *testing.T) {
+	socketPath := ccConnectTestSocketPath(t)
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen unix socket: %v", err)
+	}
+	seenCh := make(chan notifyRequest, 1)
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req notifyRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		seenCh <- req
+		w.WriteHeader(http.StatusOK)
+	})}
+	go func() {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			t.Errorf("serve unix socket: %v", err)
+		}
+	}()
+	defer srv.Close()
+
+	cc := NewCCConnectClientWithConfig(CCConnectConfig{
+		SocketPath:     socketPath,
+		NotifyEndpoint: "notify-session",
+	})
+	PushInbox(context.Background(), nil, cc, fakeInboxMetadataLookup{
+		user: db.User{Email: "1001@alibaba-inc.com"},
+	}, db.InboxItem{
+		RecipientID: makeTestUUID(0x11),
+		Title:       "Non issue notification",
+		Type:        "system_notice",
+		Severity:    "info",
+	})
+
+	select {
+	case req := <-seenCh:
+		t.Fatalf("unexpected notify-session request for non-issue inbox: %#v", req)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestPushInboxSendsNonIssueToNotifyEndpoint(t *testing.T) {
+	socketPath := ccConnectTestSocketPath(t)
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen unix socket: %v", err)
+	}
+	seenCh := make(chan notifyRequest, 1)
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/notify" {
+			t.Errorf("path = %q; want /notify", r.URL.Path)
+		}
+		var req notifyRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		seenCh <- req
+		w.WriteHeader(http.StatusOK)
+	})}
+	go func() {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			t.Errorf("serve unix socket: %v", err)
+		}
+	}()
+	defer srv.Close()
+
+	cc := NewCCConnectClientWithConfig(CCConnectConfig{
+		SocketPath:     socketPath,
+		NotifyEndpoint: "notify",
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	PushInbox(ctx, nil, cc, fakeInboxMetadataLookup{
+		user: db.User{Email: "1001@alibaba-inc.com"},
+	}, db.InboxItem{
+		RecipientID: makeTestUUID(0x11),
+		Title:       "Non issue notification",
+		Type:        "system_notice",
+		Severity:    "info",
+	})
+
+	select {
+	case req := <-seenCh:
+		if req.UserID != "1001" || req.Title != "Non issue notification" || req.Metadata["issue_id"] != "" {
+			t.Fatalf("request = %#v", req)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for /notify request")
 	}
 }
 

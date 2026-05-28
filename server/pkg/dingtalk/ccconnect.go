@@ -6,34 +6,51 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 )
 
-// CCConnectClient sends notifications through cc-connect's /notify API
+// CCConnectClient sends notifications through cc-connect's configured notify API
 // via a Unix socket. When configured, PushInbox uses this instead of
 // calling the DingTalk API directly, so cc-connect can store context
 // for reply detection.
 type CCConnectClient struct {
-	hc         *http.Client
-	socketPath string
+	hc                 *http.Client
+	socketPath         string
+	notifyEndpointPath string
+}
+
+type CCConnectConfig struct {
+	SocketPath     string
+	NotifyEndpoint string
 }
 
 // NewCCConnectClient returns nil when socketPath is empty, matching the
 // nil-is-disabled convention used by Client.
 func NewCCConnectClient(socketPath string) *CCConnectClient {
-	if socketPath == "" {
+	return NewCCConnectClientWithConfig(CCConnectConfig{SocketPath: socketPath})
+}
+
+func NewCCConnectClientWithConfig(cfg CCConnectConfig) *CCConnectClient {
+	if cfg.SocketPath == "" {
 		return nil
 	}
+	endpointPath, ok := NormalizeNotifyEndpoint(cfg.NotifyEndpoint)
+	if !ok {
+		slog.Warn("ccconnect: unknown notify endpoint, defaulting to /notify",
+			"value", cfg.NotifyEndpoint)
+	}
 	return &CCConnectClient{
-		socketPath: socketPath,
+		socketPath:         cfg.SocketPath,
+		notifyEndpointPath: endpointPath,
 		hc: &http.Client{
 			Timeout: 15 * time.Second,
 			Transport: &http.Transport{
 				DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-					return net.Dial("unix", socketPath)
+					return net.Dial("unix", cfg.SocketPath)
 				},
 			},
 		},
@@ -41,6 +58,46 @@ func NewCCConnectClient(socketPath string) *CCConnectClient {
 }
 
 func (c *CCConnectClient) Enabled() bool { return c != nil }
+
+func (c *CCConnectClient) NotifyEndpointPath() string {
+	if c == nil {
+		return ""
+	}
+	return c.notifyEndpointPath
+}
+
+func (c *CCConnectClient) UsesNotifySessionEndpoint() bool {
+	return c != nil && c.notifyEndpointPath == "/notify-session"
+}
+
+// ensureAlibabaEmail returns the input untouched if it already contains "@",
+// otherwise appends "@alibaba-inc.com". The /notify-session contract on
+// cc-connect only accepts the full Alibaba email form; bare staff IDs are
+// rejected on that side.
+func ensureAlibabaEmail(userID string) string {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return userID
+	}
+	if strings.Contains(userID, "@") {
+		return userID
+	}
+	return userID + "@alibaba-inc.com"
+}
+
+// NormalizeNotifyEndpoint maps a user-supplied endpoint string to the path
+// cc-connect actually serves. The bool is false for unrecognized values
+// (defaulted to /notify) so the caller can surface a configuration warning.
+func NormalizeNotifyEndpoint(endpoint string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(endpoint)) {
+	case "", "notify", "/notify":
+		return "/notify", true
+	case "notify-session", "/notify-session", "session":
+		return "/notify-session", true
+	default:
+		return "/notify", false
+	}
+}
 
 type notifyRequest struct {
 	Platform string            `json:"platform"`
@@ -101,15 +158,22 @@ type QuestionCardOption struct {
 	Description string `json:"description,omitempty"`
 }
 
-// SendNotification sends a notification through cc-connect's /notify endpoint.
+// SendNotification sends a notification through cc-connect's configured notify endpoint.
+// Callers pass the bare DingTalk staff ID (e.g. "1001"); when targeting
+// /notify-session the client expands it to "<id>@alibaba-inc.com" on the wire
+// because that endpoint only accepts the full Alibaba email form.
 func (c *CCConnectClient) SendNotification(ctx context.Context, userID, title, content string, metadata map[string]string) error {
 	if !c.Enabled() {
 		return fmt.Errorf("ccconnect: client not configured")
 	}
 
+	wireUserID := userID
+	if c.UsesNotifySessionEndpoint() {
+		wireUserID = ensureAlibabaEmail(userID)
+	}
 	body, err := json.Marshal(notifyRequest{
 		Platform: "dingtalk",
-		UserID:   userID,
+		UserID:   wireUserID,
 		Title:    title,
 		Content:  content,
 		Metadata: metadata,
@@ -118,7 +182,7 @@ func (c *CCConnectClient) SendNotification(ctx context.Context, userID, title, c
 		return fmt.Errorf("ccconnect: marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost/notify", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost"+c.notifyEndpointPath, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("ccconnect: create request: %w", err)
 	}

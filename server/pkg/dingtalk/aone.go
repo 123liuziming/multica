@@ -29,7 +29,7 @@ var aoneMirrorDedup = struct {
 	seen map[string]time.Time
 }{seen: make(map[string]time.Time)}
 
-func pushAoneLinkedTargets(ctx context.Context, client *Client, ccClient *CCConnectClient, item db.InboxItem, skipUserID string) {
+func pushAoneLinkedTargets(ctx context.Context, client *Client, ccClient *CCConnectClient, item db.InboxItem, skipUserID string, meta map[string]string) {
 	if !client.Enabled() && !ccClient.Enabled() {
 		return
 	}
@@ -40,7 +40,7 @@ func pushAoneLinkedTargets(ctx context.Context, client *Client, ccClient *CCConn
 	}
 
 	markdown := BuildInboxMarkdown(item)
-	meta := inboxMetadata(item)
+	meta = cloneMetadata(meta)
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -63,6 +63,17 @@ func pushAoneLinkedTargets(ctx context.Context, client *Client, ccClient *CCConn
 			sendExternalGroupNotification(ctx, client, ccClient, groupID, markdown, meta, item.Type)
 		}
 	}()
+}
+
+func cloneMetadata(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func extractAoneID(title string) string {
