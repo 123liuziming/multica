@@ -161,6 +161,9 @@ export function NotifySummaryTab() {
               <p className="text-xs text-muted-foreground">
                 {t(($) => $.notify_summary.template_hint)}
               </p>
+              <p className="text-xs text-muted-foreground">
+                {t(($) => $.notify_summary.template_funcs_hint)}
+              </p>
             </div>
 
             {/* Variable cheatsheet */}

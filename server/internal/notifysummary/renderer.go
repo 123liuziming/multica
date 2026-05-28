@@ -88,6 +88,18 @@ func BuildTemplateData(batch []QueuedNotification, settings Settings, staffID, s
 	}
 }
 
+// templateFuncs extends Go text/template with string helpers so operators
+// can write status-conditional sections like:
+//
+//	{{if contains .IssueStatusTagShort "PR"}}## 当前阻塞点{{end}}
+var templateFuncs = template.FuncMap{
+	"contains":  strings.Contains,
+	"hasPrefix": strings.HasPrefix,
+	"hasSuffix": strings.HasSuffix,
+	"toLower":   strings.ToLower,
+	"toUpper":   strings.ToUpper,
+}
+
 // Render parses tmpl (falling back to DefaultTemplate when empty) and
 // executes it against data. Output is trimmed of leading/trailing
 // whitespace.
@@ -95,7 +107,7 @@ func Render(tmpl string, data TemplateData) (string, error) {
 	if strings.TrimSpace(tmpl) == "" {
 		tmpl = DefaultTemplate
 	}
-	t, err := template.New("notify_summary").Parse(tmpl)
+	t, err := template.New("notify_summary").Funcs(templateFuncs).Parse(tmpl)
 	if err != nil {
 		return "", fmt.Errorf("notifysummary: parse template: %w", err)
 	}
@@ -117,8 +129,8 @@ func ValidateTemplate(tmpl string) error {
 	if strings.TrimSpace(tmpl) == "" {
 		return nil
 	}
-	if _, err := template.New("notify_summary").Parse(tmpl); err != nil {
-		return fmt.Errorf("notifysummary: template parse error: %w (template variables must use PascalCase, e.g. {{.IssueTitle}})", err)
+	if _, err := template.New("notify_summary").Funcs(templateFuncs).Parse(tmpl); err != nil {
+		return fmt.Errorf("notifysummary: template parse error: %w (template variables use PascalCase e.g. {{.IssueTitle}}; available funcs: contains, hasPrefix, hasSuffix, toLower, toUpper)", err)
 	}
 	return nil
 }

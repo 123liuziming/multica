@@ -244,6 +244,7 @@
     "template_label": "Prompt template",
     "template_placeholder": "Leave empty to use the built-in markdown-card default",
     "template_hint": "Go text/template syntax. Variables use PascalCase (e.g. {{.IssueTitle}}). Server returns a 400 with the exact parse-error message if invalid.",
+    "template_funcs_hint": "Extra functions: contains, hasPrefix, hasSuffix, toLower, toUpper. Example: {{if contains .IssueStatusTagShort \"PR\"}}...{{end}}",
     "variables_title": "Available template variables",
     "save": "Save",
     "saving": "Saving...",

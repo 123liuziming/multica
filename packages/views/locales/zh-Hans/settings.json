@@ -244,6 +244,7 @@
     "template_label": "提示词模板",
     "template_placeholder": "留空使用内置的 markdown 卡片默认模板",
     "template_hint": "Go text/template 语法。变量使用 PascalCase（如 {{.IssueTitle}}）。模板出错时服务器会返回 400 + 详细的解析错误信息。",
+    "template_funcs_hint": "内置函数：contains, hasPrefix, hasSuffix, toLower, toUpper。示例：{{if contains .IssueStatusTagShort \"PR\"}}...{{end}}",
     "variables_title": "可用的模板变量",
     "save": "保存",
     "saving": "保存中...",
