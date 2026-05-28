@@ -100,8 +100,10 @@ func TestInboxMetadataIncludesReplyContext(t *testing.T) {
 }
 
 type fakeInboxMetadataLookup struct {
-	user  db.User
-	issue db.Issue
+	user   db.User
+	issue  db.Issue
+	labels []db.IssueLabel
+	prs    []db.ListPullRequestsByIssueRow
 }
 
 func (f fakeInboxMetadataLookup) GetUser(context.Context, pgtype.UUID) (db.User, error) {
@@ -110,6 +112,14 @@ func (f fakeInboxMetadataLookup) GetUser(context.Context, pgtype.UUID) (db.User,
 
 func (f fakeInboxMetadataLookup) GetIssue(context.Context, pgtype.UUID) (db.Issue, error) {
 	return f.issue, nil
+}
+
+func (f fakeInboxMetadataLookup) ListLabelsByIssue(context.Context, db.ListLabelsByIssueParams) ([]db.IssueLabel, error) {
+	return f.labels, nil
+}
+
+func (f fakeInboxMetadataLookup) ListPullRequestsByIssue(context.Context, pgtype.UUID) ([]db.ListPullRequestsByIssueRow, error) {
+	return f.prs, nil
 }
 
 func TestEnrichedInboxMetadataIncludesIssueFields(t *testing.T) {
@@ -128,6 +138,15 @@ func TestEnrichedInboxMetadataIncludesIssueFields(t *testing.T) {
 			Status:    "in_progress",
 			CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
 		},
+		labels: []db.IssueLabel{
+			{Name: "area:backend"},
+			{Name: "Status:Code-Review"},
+			{Name: "status:blocked"},
+		},
+		prs: []db.ListPullRequestsByIssueRow{
+			{HtmlUrl: "https://code.alibaba-inc.com/multica/server/codereview/12345"},
+			{HtmlUrl: "https://github.com/multica-ai/multica/pull/42"},
+		},
 	}, item)
 
 	if got["issue_title"] != "Fix deploy" {
@@ -138,6 +157,43 @@ func TestEnrichedInboxMetadataIncludesIssueFields(t *testing.T) {
 	}
 	if got["issue_create_time"] != "2026-05-27T01:30:00Z" {
 		t.Errorf("issue_create_time metadata = %q", got["issue_create_time"])
+	}
+	// First label matching status: prefix wins, regardless of casing.
+	if got["issue_status_tag"] != "Status:Code-Review" {
+		t.Errorf("issue_status_tag metadata = %q; want Status:Code-Review", got["issue_status_tag"])
+	}
+	wantPRs := "https://code.alibaba-inc.com/multica/server/codereview/12345\nhttps://github.com/multica-ai/multica/pull/42"
+	if got["issue_pull_requests"] != wantPRs {
+		t.Errorf("issue_pull_requests metadata = %q; want %q", got["issue_pull_requests"], wantPRs)
+	}
+}
+
+func TestEnrichedInboxMetadataOmitsStatusTagAndPRsWhenAbsent(t *testing.T) {
+	issueID := makeTestUUID(0xbb)
+	item := db.InboxItem{
+		WorkspaceID: makeTestUUID(0xaa),
+		IssueID:     issueID,
+		Title:       "Notification title",
+		Type:        "status_changed",
+	}
+	got := enrichedInboxMetadata(context.Background(), fakeInboxMetadataLookup{
+		issue: db.Issue{
+			ID:     issueID,
+			Title:  "Fix deploy",
+			Status: "in_progress",
+		},
+		labels: []db.IssueLabel{
+			{Name: "area:backend"},
+			{Name: "priority:p1"},
+		},
+		// no prs
+	}, item)
+
+	if _, present := got["issue_status_tag"]; present {
+		t.Errorf("issue_status_tag should be absent when no label matches; got %q", got["issue_status_tag"])
+	}
+	if _, present := got["issue_pull_requests"]; present {
+		t.Errorf("issue_pull_requests should be absent when issue has no PRs; got %q", got["issue_pull_requests"])
 	}
 }
 

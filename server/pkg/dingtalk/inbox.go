@@ -21,7 +21,11 @@ type InboxRecipientLookup interface {
 
 type InboxIssueLookup interface {
 	GetIssue(ctx context.Context, id pgtype.UUID) (db.Issue, error)
+	ListLabelsByIssue(ctx context.Context, arg db.ListLabelsByIssueParams) ([]db.IssueLabel, error)
+	ListPullRequestsByIssue(ctx context.Context, issueID pgtype.UUID) ([]db.ListPullRequestsByIssueRow, error)
 }
+
+const issueStatusLabelPrefix = "status:"
 
 // PushInbox best-effort mirrors an inbox item to the recipient's 1:1 DingTalk
 // chat. When a CCConnectClient is provided and enabled, the notification is
@@ -108,11 +112,63 @@ func enrichedInboxMetadata(ctx context.Context, q InboxRecipientLookup, item db.
 				"issue_id", formatUUID(item.IssueID),
 				"error", err)
 		}
+
+		if tag := firstStatusLabel(ctx, issueLookup, item); tag != "" {
+			meta["issue_status_tag"] = tag
+		}
+
+		if urls := pullRequestURLs(ctx, issueLookup, item); urls != "" {
+			meta["issue_pull_requests"] = urls
+		}
 	}
 	if item.IssueID.Valid && meta["issue_title"] == "" && item.Title != "" {
 		meta["issue_title"] = item.Title
 	}
 	return meta
+}
+
+// firstStatusLabel returns the first label whose name carries the "status:"
+// prefix (case-insensitive, after trim). Returns "" when no such label
+// exists. The agent uses this as a coarse-grained state hint alongside
+// issue.status.
+func firstStatusLabel(ctx context.Context, q InboxIssueLookup, item db.InboxItem) string {
+	labels, err := q.ListLabelsByIssue(ctx, db.ListLabelsByIssueParams{
+		IssueID:     item.IssueID,
+		WorkspaceID: item.WorkspaceID,
+	})
+	if err != nil {
+		slog.Debug("dingtalk: list labels for inbox metadata failed",
+			"issue_id", formatUUID(item.IssueID),
+			"error", err)
+		return ""
+	}
+	for _, l := range labels {
+		name := strings.TrimSpace(l.Name)
+		if strings.HasPrefix(strings.ToLower(name), issueStatusLabelPrefix) {
+			return name
+		}
+	}
+	return ""
+}
+
+// pullRequestURLs returns the issue's linked PR / MR URLs (github + aone),
+// one per line, in the order returned by ListPullRequestsByIssue (most
+// recently created first). Returns "" when the issue has no linked PRs.
+func pullRequestURLs(ctx context.Context, q InboxIssueLookup, item db.InboxItem) string {
+	prs, err := q.ListPullRequestsByIssue(ctx, item.IssueID)
+	if err != nil {
+		slog.Debug("dingtalk: list pull requests for inbox metadata failed",
+			"issue_id", formatUUID(item.IssueID),
+			"error", err)
+		return ""
+	}
+	urls := make([]string, 0, len(prs))
+	for _, pr := range prs {
+		if u := strings.TrimSpace(pr.HtmlUrl); u != "" {
+			urls = append(urls, u)
+		}
+	}
+	return strings.Join(urls, "\n")
 }
 
 // BuildInboxMarkdown renders a Multica inbox item as a DingTalk
