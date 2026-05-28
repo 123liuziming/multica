@@ -25,6 +25,7 @@
       "general": "General",
       "repositories": "Repositories",
       "integrations": "Integrations",
+      "notify_summary": "Notify Summary",
       "labs": "Labs",
       "members": "Members"
     }
@@ -228,5 +229,26 @@
         "description": "Create and work on issues"
       }
     }
+  },
+  "notify_summary": {
+    "title": "Notify Summary (DingTalk)",
+    "description": "When enabled, inbox notifications for the same (staff, issue) pair are batched and rendered into one markdown card delivered to the staff's 1:1 DingTalk chat through cc-connect. Otherwise individual notifications pass through unchanged.",
+    "enabled_label": "Enable summary injection",
+    "enabled_hint": "Turning this off restores the direct per-event push (the original behavior).",
+    "idle_wait_label": "Idle wait (seconds)",
+    "idle_wait_hint": "Flush after this much quiet on the bucket.",
+    "max_wait_label": "Max wait (seconds)",
+    "max_wait_hint": "Hard upper bound regardless of idle resets.",
+    "summary_length_label": "Summary length",
+    "summary_length_hint": "Target Chinese-char count for the summary paragraph.",
+    "template_label": "Prompt template",
+    "template_placeholder": "Leave empty to use the built-in markdown-card default",
+    "template_hint": "Go text/template syntax. Variables use PascalCase (e.g. {{.IssueTitle}}). Server returns a 400 with the exact parse-error message if invalid.",
+    "variables_title": "Available template variables",
+    "save": "Save",
+    "saving": "Saving...",
+    "toast_saved": "Notify-summary settings saved",
+    "toast_save_failed": "Failed to save notify-summary settings",
+    "admin_only_hint": "Only workspace admins or owners can change these settings."
   }
 }

@@ -25,6 +25,7 @@
       "general": "通用",
       "repositories": "代码仓库",
       "integrations": "集成",
+      "notify_summary": "通知总结",
       "labs": "实验室",
       "members": "成员"
     }
@@ -228,5 +229,26 @@
         "description": "创建并处理 issue"
       }
     }
+  },
+  "notify_summary": {
+    "title": "通知总结（钉钉）",
+    "description": "开启后，同一个（员工, issue）的多条收件箱通知会被聚合，然后通过 cc-connect 注入到该员工的 1:1 钉钉会话中，生成一张 markdown 卡片。关闭则保持原有的逐条直推行为。",
+    "enabled_label": "启用总结注入",
+    "enabled_hint": "关闭后恢复原始的逐条直推行为。",
+    "idle_wait_label": "空闲等待（秒）",
+    "idle_wait_hint": "桶内静默这段时间后触发汇总。",
+    "max_wait_label": "最大等待（秒）",
+    "max_wait_hint": "无论是否持续刷新空闲计时器，到达此上限必触发。",
+    "summary_length_label": "总结字数",
+    "summary_length_hint": "总结段落的中文目标字符数。",
+    "template_label": "提示词模板",
+    "template_placeholder": "留空使用内置的 markdown 卡片默认模板",
+    "template_hint": "Go text/template 语法。变量使用 PascalCase（如 {{.IssueTitle}}）。模板出错时服务器会返回 400 + 详细的解析错误信息。",
+    "variables_title": "可用的模板变量",
+    "save": "保存",
+    "saving": "保存中...",
+    "toast_saved": "通知总结设置已保存",
+    "toast_save_failed": "保存通知总结设置失败",
+    "admin_only_hint": "仅工作区管理员或所有者可修改这些设置。"
   }
 }

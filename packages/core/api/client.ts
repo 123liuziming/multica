@@ -88,6 +88,8 @@ import type {
   ListAutopilotRunsResponse,
   NotificationPreferenceResponse,
   NotificationPreferences,
+  NotifySummarySettings,
+  NotifySummarySettingsResponse,
   PullRequest,
   ListGitHubInstallationsResponse,
   GitHubConnectResponse,
@@ -1108,6 +1110,18 @@ export class ApiClient {
     return this.fetch("/api/notification-preferences", {
       method: "PUT",
       body: JSON.stringify({ preferences }),
+    });
+  }
+
+  // Notify-summary settings (per workspace, admin+ only on the PUT path).
+  async getNotifySummarySettings(workspaceId: string): Promise<NotifySummarySettingsResponse> {
+    return this.fetch(`/api/workspaces/${workspaceId}/notify-summary-settings`);
+  }
+
+  async updateNotifySummarySettings(workspaceId: string, settings: NotifySummarySettings): Promise<NotifySummarySettingsResponse> {
+    return this.fetch(`/api/workspaces/${workspaceId}/notify-summary-settings`, {
+      method: "PUT",
+      body: JSON.stringify(settings),
     });
   }
 
