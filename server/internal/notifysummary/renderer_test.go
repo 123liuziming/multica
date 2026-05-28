@@ -74,12 +74,11 @@ func TestRender_DefaultTemplateProducesCardStructure(t *testing.T) {
 		t.Fatalf("Render: %v", err)
 	}
 	wantSubstrings := []string{
-		"# Title",
-		"**[SHUIZHAO-GH-7 - 示例 issue](https://multica.example.com/shuizhao-gh/issues/SHUIZHAO-GH-7)**",
-		"- 状态：in_progress",
-		"- 任务状态：code-review", // stripped prefix
-		"[简介]",
-		"> 已运行时间：2 天 3 小时",
+		"## SHUIZHAO-GH-7 [示例 issue](https://multica.example.com/shuizhao-gh/issues/SHUIZHAO-GH-7)",
+		"| Issue 状态 | 任务状态 | 已运行时间 |",
+		"⏱2 天 3 小时",
+		"[ISSUE_STATUS_CELL]",
+		"## 最新进展",
 		"Notification context:",
 		"linked PR https://example.com/pr/1",
 	}
