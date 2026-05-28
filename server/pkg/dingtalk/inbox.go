@@ -94,7 +94,7 @@ func PushInbox(ctx context.Context, client *Client, ccClient *CCConnectClient, d
 			slog.Debug("dingtalk: summary skipped, no staff ID resolved",
 				"inbox_type", item.Type, "title", item.Title)
 			summaryEnabled = false
-		} else if skipUserID == "" {
+		} else {
 			skipUserID = summaryStaffID
 		}
 	}
@@ -117,9 +117,7 @@ func PushInbox(ctx context.Context, client *Client, ccClient *CCConnectClient, d
 					Metadata:   meta,
 					ReceivedAt: time.Now(),
 				})
-				if dingUserID == "" {
-					return
-				}
+				return
 			} else {
 				slog.Warn("dingtalk: summary-path /notify (notify_user=false) failed, falling back to direct",
 					"ding_user_id", notifyUserID,

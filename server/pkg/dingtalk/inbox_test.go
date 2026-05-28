@@ -363,6 +363,15 @@ func TestPushInbox_EnqueuesWhenSummaryEnabled(t *testing.T) {
 	if dispatcher.count() != 1 {
 		t.Fatalf("dispatcher.count = %d; want 1", dispatcher.count())
 	}
+
+	// Verify no second /notify (notify_user=true) is sent — this was the
+	// root cause of the double-notification bug.
+	select {
+	case req := <-ch:
+		t.Errorf("unexpected second /notify call: notify_user=%v; summary path should not fall through to direct path", req.NotifyUser)
+	case <-time.After(300 * time.Millisecond):
+		// good — no double send
+	}
 }
 
 func TestBuildInboxMarkdownOmitsContextWhenMissingIDs(t *testing.T) {
