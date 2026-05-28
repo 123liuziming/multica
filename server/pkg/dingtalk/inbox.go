@@ -3,7 +3,9 @@ package dingtalk
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -21,6 +23,7 @@ type InboxRecipientLookup interface {
 
 type InboxIssueLookup interface {
 	GetIssue(ctx context.Context, id pgtype.UUID) (db.Issue, error)
+	GetWorkspace(ctx context.Context, id pgtype.UUID) (db.Workspace, error)
 	ListLabelsByIssue(ctx context.Context, arg db.ListLabelsByIssueParams) ([]db.IssueLabel, error)
 	ListPullRequestsByIssue(ctx context.Context, issueID pgtype.UUID) ([]db.ListPullRequestsByIssueRow, error)
 }
@@ -96,8 +99,12 @@ func PushInbox(ctx context.Context, client *Client, ccClient *CCConnectClient, q
 
 func enrichedInboxMetadata(ctx context.Context, q InboxRecipientLookup, item db.InboxItem) map[string]string {
 	meta := inboxMetadata(item)
+	var issue db.Issue
+	var haveIssue bool
 	if issueLookup, ok := q.(InboxIssueLookup); ok && item.IssueID.Valid {
-		if issue, err := issueLookup.GetIssue(ctx, item.IssueID); err == nil {
+		if iss, err := issueLookup.GetIssue(ctx, item.IssueID); err == nil {
+			issue = iss
+			haveIssue = true
 			if issue.Title != "" {
 				meta["issue_title"] = issue.Title
 			}
@@ -120,11 +127,49 @@ func enrichedInboxMetadata(ctx context.Context, q InboxRecipientLookup, item db.
 		if urls := pullRequestURLs(ctx, issueLookup, item); urls != "" {
 			meta["issue_pull_requests"] = urls
 		}
+
+		if haveIssue {
+			if ws, err := issueLookup.GetWorkspace(ctx, item.WorkspaceID); err == nil {
+				if id := issueIdentifier(ws, issue); id != "" {
+					meta["issue_identifier"] = id
+					if url := issueURL(ws, id); url != "" {
+						meta["issue_url"] = url
+					}
+				}
+			} else {
+				slog.Debug("dingtalk: lookup workspace for inbox metadata failed",
+					"workspace_id", formatUUID(item.WorkspaceID),
+					"error", err)
+			}
+		}
 	}
 	if item.IssueID.Valid && meta["issue_title"] == "" && item.Title != "" {
 		meta["issue_title"] = item.Title
 	}
 	return meta
+}
+
+// issueIdentifier returns the human-readable issue code (e.g. "ACME-101")
+// built from the workspace's issue_prefix and the issue number. Returns ""
+// when either is missing — fall back to the UUID in that case.
+func issueIdentifier(ws db.Workspace, issue db.Issue) string {
+	prefix := strings.TrimSpace(ws.IssuePrefix)
+	if prefix == "" || issue.Number == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s-%d", prefix, issue.Number)
+}
+
+// issueURL constructs the workspace-scoped web URL for an issue using
+// MULTICA_APP_URL. Returns "" when the env var is unset or the slug is
+// missing so callers can omit the link instead of producing a broken one.
+func issueURL(ws db.Workspace, identifier string) string {
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_APP_URL")), "/")
+	slug := strings.TrimSpace(ws.Slug)
+	if base == "" || slug == "" || identifier == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/%s/issues/%s", base, slug, identifier)
 }
 
 // firstStatusLabel returns the first label whose name carries the "status:"

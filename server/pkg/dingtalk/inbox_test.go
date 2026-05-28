@@ -100,10 +100,11 @@ func TestInboxMetadataIncludesReplyContext(t *testing.T) {
 }
 
 type fakeInboxMetadataLookup struct {
-	user   db.User
-	issue  db.Issue
-	labels []db.IssueLabel
-	prs    []db.ListPullRequestsByIssueRow
+	user      db.User
+	issue     db.Issue
+	workspace db.Workspace
+	labels    []db.IssueLabel
+	prs       []db.ListPullRequestsByIssueRow
 }
 
 func (f fakeInboxMetadataLookup) GetUser(context.Context, pgtype.UUID) (db.User, error) {
@@ -112,6 +113,10 @@ func (f fakeInboxMetadataLookup) GetUser(context.Context, pgtype.UUID) (db.User,
 
 func (f fakeInboxMetadataLookup) GetIssue(context.Context, pgtype.UUID) (db.Issue, error) {
 	return f.issue, nil
+}
+
+func (f fakeInboxMetadataLookup) GetWorkspace(context.Context, pgtype.UUID) (db.Workspace, error) {
+	return f.workspace, nil
 }
 
 func (f fakeInboxMetadataLookup) ListLabelsByIssue(context.Context, db.ListLabelsByIssueParams) ([]db.IssueLabel, error) {
@@ -131,12 +136,18 @@ func TestEnrichedInboxMetadataIncludesIssueFields(t *testing.T) {
 		Title:       "Notification title",
 		Type:        "status_changed",
 	}
+	t.Setenv("MULTICA_APP_URL", "https://multica.example.com/")
 	got := enrichedInboxMetadata(context.Background(), fakeInboxMetadataLookup{
 		issue: db.Issue{
 			ID:        issueID,
 			Title:     "Fix deploy",
 			Status:    "in_progress",
+			Number:    101,
 			CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
+		},
+		workspace: db.Workspace{
+			Slug:        "shuizhao-gh",
+			IssuePrefix: "SHUIZHAO-GH",
 		},
 		labels: []db.IssueLabel{
 			{Name: "area:backend"},
@@ -165,6 +176,36 @@ func TestEnrichedInboxMetadataIncludesIssueFields(t *testing.T) {
 	wantPRs := "https://code.alibaba-inc.com/multica/server/codereview/12345\nhttps://github.com/multica-ai/multica/pull/42"
 	if got["issue_pull_requests"] != wantPRs {
 		t.Errorf("issue_pull_requests metadata = %q; want %q", got["issue_pull_requests"], wantPRs)
+	}
+	if got["issue_identifier"] != "SHUIZHAO-GH-101" {
+		t.Errorf("issue_identifier metadata = %q; want SHUIZHAO-GH-101", got["issue_identifier"])
+	}
+	if got["issue_url"] != "https://multica.example.com/shuizhao-gh/issues/SHUIZHAO-GH-101" {
+		t.Errorf("issue_url metadata = %q", got["issue_url"])
+	}
+}
+
+func TestEnrichedInboxMetadataOmitsURLWhenAppURLUnset(t *testing.T) {
+	t.Setenv("MULTICA_APP_URL", "")
+	issueID := makeTestUUID(0xbb)
+	item := db.InboxItem{
+		WorkspaceID: makeTestUUID(0xaa),
+		IssueID:     issueID,
+		Title:       "Notification title",
+		Type:        "status_changed",
+	}
+	got := enrichedInboxMetadata(context.Background(), fakeInboxMetadataLookup{
+		issue: db.Issue{ID: issueID, Title: "x", Status: "todo", Number: 7},
+		workspace: db.Workspace{
+			Slug:        "shuizhao-gh",
+			IssuePrefix: "SHUIZHAO-GH",
+		},
+	}, item)
+	if got["issue_identifier"] != "SHUIZHAO-GH-7" {
+		t.Errorf("identifier should still be set even without app url: got %q", got["issue_identifier"])
+	}
+	if _, present := got["issue_url"]; present {
+		t.Errorf("issue_url should be omitted when MULTICA_APP_URL is unset; got %q", got["issue_url"])
 	}
 }
 
