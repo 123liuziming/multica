@@ -6,10 +6,12 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/notifysummary"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -238,64 +240,51 @@ func TestEnrichedInboxMetadataOmitsStatusTagAndPRsWhenAbsent(t *testing.T) {
 	}
 }
 
-func TestPushInboxSkipsNonIssueWhenNotifySessionEndpoint(t *testing.T) {
-	socketPath := ccConnectTestSocketPath(t)
-	ln, err := net.Listen("unix", socketPath)
-	if err != nil {
-		t.Fatalf("listen unix socket: %v", err)
-	}
-	seenCh := make(chan notifyRequest, 1)
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req notifyRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		seenCh <- req
-		w.WriteHeader(http.StatusOK)
-	})}
-	go func() {
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			t.Errorf("serve unix socket: %v", err)
-		}
-	}()
-	defer srv.Close()
-
-	cc := NewCCConnectClientWithConfig(CCConnectConfig{
-		SocketPath:     socketPath,
-		NotifyEndpoint: "notify-session",
-	})
-	PushInbox(context.Background(), nil, cc, fakeInboxMetadataLookup{
-		user: db.User{Email: "1001@alibaba-inc.com"},
-	}, db.InboxItem{
-		RecipientID: makeTestUUID(0x11),
-		Title:       "Non issue notification",
-		Type:        "system_notice",
-		Severity:    "info",
-	})
-
-	select {
-	case req := <-seenCh:
-		t.Fatalf("unexpected notify-session request for non-issue inbox: %#v", req)
-	case <-time.After(200 * time.Millisecond):
+type fakeSummaryDispatcher struct {
+	mu    sync.Mutex
+	calls []struct {
+		StaffID  string
+		IssueID  string
+		Settings notifysummary.Settings
+		Notif    notifysummary.QueuedNotification
 	}
 }
 
-func TestPushInboxSendsNonIssueToNotifyEndpoint(t *testing.T) {
+func (f *fakeSummaryDispatcher) Enqueue(staffID, issueID string, settings notifysummary.Settings, n notifysummary.QueuedNotification) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, struct {
+		StaffID  string
+		IssueID  string
+		Settings notifysummary.Settings
+		Notif    notifysummary.QueuedNotification
+	}{staffID, issueID, settings, n})
+}
+
+func (f *fakeSummaryDispatcher) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+func ccSocketCapturingNotify(t *testing.T) (string, <-chan notifyRequest, func()) {
+	t.Helper()
 	socketPath := ccConnectTestSocketPath(t)
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen unix socket: %v", err)
 	}
-	seenCh := make(chan notifyRequest, 1)
+	ch := make(chan notifyRequest, 4)
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/notify" {
-			t.Errorf("path = %q; want /notify", r.URL.Path)
+			t.Errorf("unexpected path %q", r.URL.Path)
 		}
 		var req notifyRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("decode request: %v", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		seenCh <- req
+		ch <- req
 		w.WriteHeader(http.StatusOK)
 	})}
 	go func() {
@@ -303,30 +292,74 @@ func TestPushInboxSendsNonIssueToNotifyEndpoint(t *testing.T) {
 			t.Errorf("serve unix socket: %v", err)
 		}
 	}()
-	defer srv.Close()
+	return socketPath, ch, func() { srv.Close() }
+}
 
-	cc := NewCCConnectClientWithConfig(CCConnectConfig{
-		SocketPath:     socketPath,
-		NotifyEndpoint: "notify",
-	})
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	PushInbox(ctx, nil, cc, fakeInboxMetadataLookup{
-		user: db.User{Email: "1001@alibaba-inc.com"},
+func TestPushInbox_DirectPathWhenSummaryDisabled(t *testing.T) {
+	socketPath, ch, closeSrv := ccSocketCapturingNotify(t)
+	defer closeSrv()
+
+	cc := NewCCConnectClient(socketPath)
+	dispatcher := &fakeSummaryDispatcher{}
+	PushInbox(context.Background(), nil, cc, dispatcher, fakeInboxMetadataLookup{
+		user:      db.User{Email: "1001@alibaba-inc.com"},
+		workspace: db.Workspace{Settings: []byte(`{}`)}, // notify_summary absent → default disabled
+		issue:     db.Issue{Number: 7},
 	}, db.InboxItem{
 		RecipientID: makeTestUUID(0x11),
-		Title:       "Non issue notification",
-		Type:        "system_notice",
-		Severity:    "info",
+		WorkspaceID: makeTestUUID(0xaa),
+		IssueID:     makeTestUUID(0xbb),
+		Title:       "x",
+		Type:        "status_changed",
 	})
 
 	select {
-	case req := <-seenCh:
-		if req.UserID != "1001" || req.Title != "Non issue notification" || req.Metadata["issue_id"] != "" {
-			t.Fatalf("request = %#v", req)
+	case req := <-ch:
+		if req.NotifyUser == nil || *req.NotifyUser != true {
+			t.Errorf("notify_user = %v; want true on disabled path", req.NotifyUser)
 		}
-	case <-ctx.Done():
-		t.Fatal("timed out waiting for /notify request")
+	case <-time.After(1 * time.Second):
+		t.Fatal("expected /notify call on direct path")
+	}
+	if dispatcher.count() != 0 {
+		t.Errorf("dispatcher.count = %d; want 0 on disabled path", dispatcher.count())
+	}
+}
+
+func TestPushInbox_EnqueuesWhenSummaryEnabled(t *testing.T) {
+	socketPath, ch, closeSrv := ccSocketCapturingNotify(t)
+	defer closeSrv()
+
+	cc := NewCCConnectClient(socketPath)
+	dispatcher := &fakeSummaryDispatcher{}
+	wsSettings := []byte(`{"notify_summary":{"enabled":true,"idle_wait_secs":5,"max_wait_secs":15,"summary_length":200}}`)
+	PushInbox(context.Background(), nil, cc, dispatcher, fakeInboxMetadataLookup{
+		user:      db.User{Email: "1001@alibaba-inc.com"},
+		workspace: db.Workspace{Settings: wsSettings, IssuePrefix: "ACME", Slug: "acme"},
+		issue:     db.Issue{Number: 7, Title: "test", Status: "in_progress"},
+	}, db.InboxItem{
+		RecipientID: makeTestUUID(0x11),
+		WorkspaceID: makeTestUUID(0xaa),
+		IssueID:     makeTestUUID(0xbb),
+		Title:       "x",
+		Type:        "status_changed",
+	})
+
+	select {
+	case req := <-ch:
+		if req.NotifyUser == nil || *req.NotifyUser != false {
+			t.Errorf("notify_user = %v; want false on summary path", req.NotifyUser)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("expected /notify call (notify_user=false) on summary path")
+	}
+	// Dispatcher.Enqueue runs in the same goroutine as the cc call; wait briefly.
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) && dispatcher.count() == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if dispatcher.count() != 1 {
+		t.Fatalf("dispatcher.count = %d; want 1", dispatcher.count())
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
+	"github.com/multica-ai/multica/server/internal/notifysummary"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dingtalk"
@@ -20,6 +21,7 @@ import (
 // is false on a nil receiver).
 var dingClient *dingtalk.Client
 var ccConnectClient *dingtalk.CCConnectClient
+var summaryDispatcher *notifysummary.Dispatcher
 
 // mention represents a parsed @mention from markdown content (local alias).
 type mention struct {
@@ -365,7 +367,7 @@ func notifyIssueSubscribers(
 			ActorID:     e.ActorID,
 			Payload:     map[string]any{"item": resp},
 		})
-		dingtalk.PushInbox(ctx, dingClient, ccConnectClient, queries, item)
+		dingtalk.PushInbox(ctx, dingClient, ccConnectClient, summaryDispatcher, queries, item)
 	}
 
 	return notified
@@ -430,7 +432,7 @@ func notifyDirect(
 		ActorID:     e.ActorID,
 		Payload:     map[string]any{"item": resp},
 	})
-	dingtalk.PushInbox(ctx, dingClient, ccConnectClient, queries, item)
+	dingtalk.PushInbox(ctx, dingClient, ccConnectClient, summaryDispatcher, queries, item)
 }
 
 // notifyMentionedMembers creates inbox items for each @mentioned member,
@@ -540,7 +542,7 @@ func notifyMentionedMembers(
 			ActorID:     e.ActorID,
 			Payload:     map[string]any{"item": resp},
 		})
-		dingtalk.PushInbox(context.Background(), dingClient, ccConnectClient, queries, item)
+		dingtalk.PushInbox(context.Background(), dingClient, ccConnectClient, summaryDispatcher, queries, item)
 	}
 }
 
@@ -551,9 +553,10 @@ func notifyMentionedMembers(
 // NOTE: uses context.Background() because the event bus dispatches synchronously
 // within the HTTP request goroutine. Adding per-handler timeouts is a bus-level
 // concern — see events.Bus for future improvements.
-func registerNotificationListeners(bus *events.Bus, queries *db.Queries, ding *dingtalk.Client, cc *dingtalk.CCConnectClient) {
+func registerNotificationListeners(bus *events.Bus, queries *db.Queries, ding *dingtalk.Client, cc *dingtalk.CCConnectClient, dispatcher *notifysummary.Dispatcher) {
 	dingClient = ding
 	ccConnectClient = cc
+	summaryDispatcher = dispatcher
 	ctx := context.Background()
 
 	// issue:created — Direct notification to assignee if assignee != actor

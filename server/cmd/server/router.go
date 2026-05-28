@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/handler"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/notifysummary"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
@@ -83,6 +84,11 @@ type RouterOptions struct {
 	// DingTalk chat.
 	Dingtalk  *dingtalk.Client
 	CCConnect *dingtalk.CCConnectClient
+	// SummaryDispatcher is the per-(staff, issue) inbox summary dispatcher.
+	// When non-nil the TaskService wires it into PushInbox calls; the
+	// dispatcher itself no-ops when the workspace's notify_summary.enabled
+	// is false.
+	SummaryDispatcher *notifysummary.Dispatcher
 }
 
 func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb *redis.Client, opts RouterOptions) chi.Router {
@@ -124,6 +130,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	if opts.CCConnect.Enabled() {
 		h.TaskService.CCConnect = opts.CCConnect
+	}
+	if opts.SummaryDispatcher != nil {
+		h.TaskService.SummaryDispatcher = opts.SummaryDispatcher
 	}
 	if rdb != nil {
 		h.UpdateStore = handler.NewRedisUpdateStore(rdb)
@@ -312,6 +321,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 						r.Delete("/", h.DeleteMember)
 					})
 					r.Delete("/invitations/{invitationId}", h.RevokeInvitation)
+					// notify-summary settings: per-workspace template + throttle
+					// + on/off for the cc-connect summary injection path.
+					r.Get("/notify-summary-settings", h.GetNotifySummarySettings)
+					r.Put("/notify-summary-settings", h.UpdateNotifySummarySettings)
 				})
 				// Owner-only access
 				r.With(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner")).Delete("/", h.DeleteWorkspace)

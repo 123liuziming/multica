@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/issuechangelog"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/notifysummary"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -260,8 +261,7 @@ func main() {
 		RobotCode: os.Getenv("DINGTALK_ROBOT_CODE"),
 	})
 	ccClient := dingtalk.NewCCConnectClientWithConfig(dingtalk.CCConnectConfig{
-		SocketPath:     os.Getenv("CC_CONNECT_SOCKET"),
-		NotifyEndpoint: os.Getenv("CC_CONNECT_NOTIFY_ENDPOINT"),
+		SocketPath: os.Getenv("CC_CONNECT_SOCKET"),
 	})
 	if dingClient.Enabled() {
 		slog.Info("dingtalk: inbox push enabled")
@@ -270,16 +270,23 @@ func main() {
 	}
 	if ccClient.Enabled() {
 		slog.Info("dingtalk: cc-connect relay enabled",
-			"socket", os.Getenv("CC_CONNECT_SOCKET"),
-			"notify_endpoint", ccClient.NotifyEndpointPath())
+			"socket", os.Getenv("CC_CONNECT_SOCKET"))
 	}
+
+	// notifysummary dispatcher batches per-(staff, issue) inbox events and
+	// injects rendered prompts into the user's 1:1 session. Construction
+	// is unconditional — the dispatcher is a no-op when the workspace's
+	// notify_summary.enabled is false. ccClient may be nil; that's fine
+	// (dispatcher .Enqueue is a no-op when ccClient is nil too, gated in
+	// the inbox path).
+	summaryDispatcher := notifysummary.NewDispatcher(ccClient)
 
 	// Order matters: subscriber listeners must register BEFORE notification listeners.
 	// The notification listener queries the subscriber table to determine recipients,
 	// so subscribers must be written first within the same synchronous event dispatch.
 	registerSubscriberListeners(bus, queries)
 	registerActivityListeners(bus, queries)
-	registerNotificationListeners(bus, queries, dingClient, ccClient)
+	registerNotificationListeners(bus, queries, dingClient, ccClient, summaryDispatcher)
 	registerQuestionCardListeners(bus, queries, ccClient)
 
 	metricsConfig := obsmetrics.ConfigFromEnv()
@@ -315,6 +322,8 @@ func main() {
 		DaemonWakeup:       daemonWakeup,
 		HeartbeatScheduler: heartbeatScheduler,
 		Dingtalk:           dingClient,
+		CCConnect:          ccClient,
+		SummaryDispatcher:  summaryDispatcher,
 	})
 
 	srv := &http.Server{
@@ -409,6 +418,11 @@ func main() {
 	// final batch of queued heartbeat bumps.
 	sweepCancel()
 	heartbeatScheduler.Stop()
+
+	// Drain pending notify-summary buckets before closing the DB pool: each
+	// flush calls cc-connect, which doesn't need the DB, but the dispatcher
+	// model wants HTTP-listeners gone first so no late Enqueue races.
+	summaryDispatcher.Stop()
 
 	if metricsServer != nil {
 		metricsShutdownCtx, metricsShutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)

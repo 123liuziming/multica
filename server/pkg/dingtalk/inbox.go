@@ -11,7 +11,16 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/internal/notifysummary"
 )
+
+// SummaryDispatcher is the per-(staff, issue) notify-summary dispatcher that
+// PushInbox optionally hands events to when the workspace enables it. Defined
+// as an interface to dodge a hard package dependency in tests; the production
+// implementation is *notifysummary.Dispatcher.
+type SummaryDispatcher interface {
+	Enqueue(staffID, issueID string, settings notifysummary.Settings, n notifysummary.QueuedNotification)
+}
 
 // InboxRecipientLookup is the minimal slice of *db.Queries needed to resolve
 // an inbox recipient's email. Defined as an interface so call sites can pass
@@ -35,24 +44,33 @@ const issueStatusLabelPrefix = "status:"
 // routed through cc-connect so it can store context for reply detection.
 // Otherwise falls back to the direct DingTalk API.
 //
-// Safe to call when both clients are nil/disabled, when the recipient is not
-// an Alibaba employee, or when the user lookup fails — every failure is
-// logged and swallowed so the inbox flow never blocks on DingTalk.
+// When the recipient's workspace has notify_summary.enabled = true AND
+// dispatcher is non-nil AND the inbox item references an issue:
+//
+//   1. /notify is called with notify_user=false so cc-connect runs the Aone
+//      comment mirror but does NOT deliver the platform-side card.
+//   2. The event is enqueued into the per-(staff, issue) summary bucket.
+//      When the bucket flushes, the dispatcher renders the workspace's
+//      template and POSTs to /notify-session — the user sees one coalesced
+//      summary card instead of N raw notifications.
+//
+// On any failure in the summary path (Aone-leg failure before enqueue) we
+// fall back to the direct push so the user isn't left without any signal.
+//
+// Safe to call when clients/dispatcher are nil/disabled, when the recipient
+// is not an Alibaba employee, or when the user lookup fails — every failure
+// is logged and swallowed so the inbox flow never blocks.
 //
 // The HTTP push runs in a goroutine with a fresh 10s timeout so that the
 // caller's request context (often cancelled the moment a handler returns)
 // does not abort the outbound call.
-func PushInbox(ctx context.Context, client *Client, ccClient *CCConnectClient, q InboxRecipientLookup, item db.InboxItem) {
+func PushInbox(ctx context.Context, client *Client, ccClient *CCConnectClient, dispatcher SummaryDispatcher, q InboxRecipientLookup, item db.InboxItem) {
 	if !client.Enabled() && !ccClient.Enabled() {
-		return
-	}
-	if ccClient.UsesNotifySessionEndpoint() && !item.IssueID.Valid {
-		slog.Debug("dingtalk: skipping non-issue inbox for notify-session",
-			"inbox_type", item.Type)
 		return
 	}
 	markdown := BuildInboxMarkdown(item)
 	meta := enrichedInboxMetadata(ctx, q, item)
+	settings := workspaceNotifySummarySettings(ctx, q, item)
 	var skipUserID string
 
 	user, err := q.GetUser(ctx, item.RecipientID)
@@ -63,18 +81,44 @@ func PushInbox(ctx context.Context, client *Client, ccClient *CCConnectClient, q
 	} else if userID, ok := UserIDFromAlibabaEmail(user.Email); ok {
 		skipUserID = userID
 
-		go func(dt *Client, cc *CCConnectClient, dingUserID, title, md, inboxType string, meta map[string]string) {
+		useSummary := settings.Enabled && dispatcher != nil && ccClient.Enabled() && item.IssueID.Valid
+
+		go func(dt *Client, cc *CCConnectClient, disp SummaryDispatcher, dingUserID, title, md, inboxType string, meta map[string]string, summary bool, s notifysummary.Settings, it db.InboxItem) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
-			// Prefer cc-connect: it stores context so replies can be linked back to the issue.
+			if summary {
+				// Summary path: send to /notify with notify_user=false so only
+				// the Aone comment fires, then enqueue for the summary bucket.
+				// On Aone-leg failure, fall back to the direct push so the
+				// user isn't left without any signal.
+				if err := cc.SendNotification(ctx, dingUserID, title, md, meta, false); err == nil {
+					disp.Enqueue(dingUserID, formatUUID(it.IssueID), s, notifysummary.QueuedNotification{
+						Platform:   "dingtalk",
+						UserID:     dingUserID,
+						Title:      title,
+						Content:    md,
+						Metadata:   meta,
+						ReceivedAt: time.Now(),
+					})
+					return
+				} else {
+					slog.Warn("dingtalk: summary-path /notify (notify_user=false) failed, falling back to direct",
+						"ding_user_id", dingUserID,
+						"inbox_type", inboxType,
+						"error", err)
+					// Fall through to direct push below.
+				}
+			}
+
+			// Direct path: cc-connect first (stores reply context), then
+			// fall back to raw DingTalk API.
 			if cc.Enabled() {
-				if err := cc.SendNotification(ctx, dingUserID, title, md, meta); err != nil {
+				if err := cc.SendNotification(ctx, dingUserID, title, md, meta, true); err != nil {
 					slog.Warn("dingtalk: push inbox via cc-connect failed, falling back to direct",
 						"ding_user_id", dingUserID,
 						"inbox_type", inboxType,
 						"error", err)
-					// Fall through to direct DingTalk
 				} else {
 					return
 				}
@@ -88,13 +132,39 @@ func PushInbox(ctx context.Context, client *Client, ccClient *CCConnectClient, q
 						"error", err)
 				}
 			}
-		}(client, ccClient, userID, item.Title, markdown, item.Type, meta)
+		}(client, ccClient, dispatcher, userID, item.Title, markdown, item.Type, meta, useSummary, settings, item)
 	} else {
 		slog.Debug("dingtalk: skipping non-alibaba email",
 			"inbox_type", item.Type)
 	}
 
 	pushAoneLinkedTargets(ctx, client, ccClient, item, skipUserID, meta)
+}
+
+// workspaceNotifySummarySettings reads the per-workspace settings JSONB and
+// extracts the notify_summary sub-object. Returns notifysummary.Default()
+// when the lookup fails or the key is absent (logged at debug — not a fatal
+// condition for the inbox push).
+func workspaceNotifySummarySettings(ctx context.Context, q InboxRecipientLookup, item db.InboxItem) notifysummary.Settings {
+	issueLookup, ok := q.(InboxIssueLookup)
+	if !ok || !item.WorkspaceID.Valid {
+		return notifysummary.Default()
+	}
+	ws, err := issueLookup.GetWorkspace(ctx, item.WorkspaceID)
+	if err != nil {
+		slog.Debug("dingtalk: lookup workspace for notify_summary settings failed",
+			"workspace_id", formatUUID(item.WorkspaceID),
+			"error", err)
+		return notifysummary.Default()
+	}
+	s, err := notifysummary.FromWorkspaceSettings(ws.Settings)
+	if err != nil {
+		slog.Debug("dingtalk: parse notify_summary settings failed",
+			"workspace_id", formatUUID(item.WorkspaceID),
+			"error", err)
+		return notifysummary.Default()
+	}
+	return s
 }
 
 func enrichedInboxMetadata(ctx context.Context, q InboxRecipientLookup, item db.InboxItem) map[string]string {

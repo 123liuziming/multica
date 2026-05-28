@@ -16,6 +16,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/mention"
+	"github.com/multica-ai/multica/server/internal/notifysummary"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -37,6 +38,10 @@ type TaskService struct {
 	// branch on it.
 	Dingtalk   *dingtalk.Client
 	CCConnect  *dingtalk.CCConnectClient
+	// SummaryDispatcher batches inbox events for the per-(staff, issue)
+	// summary path. Nil = direct push only (the dispatcher itself no-ops
+	// when the workspace's notify_summary.enabled is false).
+	SummaryDispatcher *notifysummary.Dispatcher
 	// EmptyClaim caches "this runtime has no queued task" so the daemon
 	// poll path can skip a Postgres scan on the steady-state empty case.
 	// Optional — a nil cache disables the fast path and every claim
@@ -2019,7 +2024,7 @@ func (s *TaskService) notifyQuickCreateCompleted(ctx context.Context, task db.Ag
 		return
 	}
 	s.publishQuickCreateInbox(item, qc.WorkspaceID, util.UUIDToString(task.AgentID), issue.Status)
-	dingtalk.PushInbox(ctx, s.Dingtalk, s.CCConnect, s.Queries, item)
+	dingtalk.PushInbox(ctx, s.Dingtalk, s.CCConnect, s.SummaryDispatcher, s.Queries, item)
 }
 
 // notifyQuickCreateFailed writes a failure inbox notification carrying the
@@ -2062,7 +2067,7 @@ func (s *TaskService) notifyQuickCreateFailed(ctx context.Context, task db.Agent
 		return
 	}
 	s.publishQuickCreateInbox(item, qc.WorkspaceID, util.UUIDToString(task.AgentID), "")
-	dingtalk.PushInbox(ctx, s.Dingtalk, s.CCConnect, s.Queries, item)
+	dingtalk.PushInbox(ctx, s.Dingtalk, s.CCConnect, s.SummaryDispatcher, s.Queries, item)
 }
 
 // publishQuickCreateInbox emits the WS event so the requester's inbox list

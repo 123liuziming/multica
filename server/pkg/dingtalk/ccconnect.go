@@ -6,26 +6,29 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 )
 
-// CCConnectClient sends notifications through cc-connect's configured notify API
-// via a Unix socket. When configured, PushInbox uses this instead of
-// calling the DingTalk API directly, so cc-connect can store context
-// for reply detection.
+// CCConnectClient talks to cc-connect over its Unix socket. It exposes three
+// hot-path methods used by the inbox push:
+//
+//   - SendNotification — POST /notify, with notify_user gating the platform
+//     delivery (false = Aone-mirror only, used by the summary path).
+//   - SendSessionPrompt — POST /notify-session with a pre-rendered prompt,
+//     injected into the user's active 1:1 session. Used by the notifysummary
+//     dispatcher after a bucket flush.
+//   - SendSessionMessage — POST /send for group-chat fan-out.
+//   - SendQuestionCard — POST /cards/question for interactive cards.
 type CCConnectClient struct {
-	hc                 *http.Client
-	socketPath         string
-	notifyEndpointPath string
+	hc         *http.Client
+	socketPath string
 }
 
 type CCConnectConfig struct {
-	SocketPath     string
-	NotifyEndpoint string
+	SocketPath string
 }
 
 // NewCCConnectClient returns nil when socketPath is empty, matching the
@@ -38,16 +41,10 @@ func NewCCConnectClientWithConfig(cfg CCConnectConfig) *CCConnectClient {
 	if cfg.SocketPath == "" {
 		return nil
 	}
-	endpointPath, ok := NormalizeNotifyEndpoint(cfg.NotifyEndpoint)
-	if !ok {
-		slog.Warn("ccconnect: unknown notify endpoint, defaulting to /notify",
-			"value", cfg.NotifyEndpoint)
-	}
 	return &CCConnectClient{
-		socketPath:         cfg.SocketPath,
-		notifyEndpointPath: endpointPath,
+		socketPath: cfg.SocketPath,
 		hc: &http.Client{
-			Timeout: 15 * time.Second,
+			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
 				DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
 					return net.Dial("unix", cfg.SocketPath)
@@ -59,21 +56,9 @@ func NewCCConnectClientWithConfig(cfg CCConnectConfig) *CCConnectClient {
 
 func (c *CCConnectClient) Enabled() bool { return c != nil }
 
-func (c *CCConnectClient) NotifyEndpointPath() string {
-	if c == nil {
-		return ""
-	}
-	return c.notifyEndpointPath
-}
-
-func (c *CCConnectClient) UsesNotifySessionEndpoint() bool {
-	return c != nil && c.notifyEndpointPath == "/notify-session"
-}
-
 // ensureAlibabaEmail returns the input untouched if it already contains "@",
-// otherwise appends "@alibaba-inc.com". The /notify-session contract on
-// cc-connect only accepts the full Alibaba email form; bare staff IDs are
-// rejected on that side.
+// otherwise appends "@alibaba-inc.com". /notify-session only accepts the
+// full Alibaba email form.
 func ensureAlibabaEmail(userID string) string {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
@@ -85,26 +70,19 @@ func ensureAlibabaEmail(userID string) string {
 	return userID + "@alibaba-inc.com"
 }
 
-// NormalizeNotifyEndpoint maps a user-supplied endpoint string to the path
-// cc-connect actually serves. The bool is false for unrecognized values
-// (defaulted to /notify) so the caller can surface a configuration warning.
-func NormalizeNotifyEndpoint(endpoint string) (string, bool) {
-	switch strings.ToLower(strings.TrimSpace(endpoint)) {
-	case "", "notify", "/notify":
-		return "/notify", true
-	case "notify-session", "/notify-session", "session":
-		return "/notify-session", true
-	default:
-		return "/notify", false
-	}
+type notifyRequest struct {
+	Platform   string            `json:"platform"`
+	UserID     string            `json:"user_id"`
+	Title      string            `json:"title"`
+	Content    string            `json:"content"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
+	NotifyUser *bool             `json:"notify_user,omitempty"`
 }
 
-type notifyRequest struct {
-	Platform string            `json:"platform"`
-	UserID   string            `json:"user_id"`
-	Title    string            `json:"title"`
-	Content  string            `json:"content"`
-	Metadata map[string]string `json:"metadata,omitempty"`
+type notifySessionRequest struct {
+	Platform string `json:"platform,omitempty"`
+	UserID   string `json:"user_id"`
+	Prompt   string `json:"prompt"`
 }
 
 type sendRequest struct {
@@ -158,31 +136,28 @@ type QuestionCardOption struct {
 	Description string `json:"description,omitempty"`
 }
 
-// SendNotification sends a notification through cc-connect's configured notify endpoint.
-// Callers pass the bare DingTalk staff ID (e.g. "1001"); when targeting
-// /notify-session the client expands it to "<id>@alibaba-inc.com" on the wire
-// because that endpoint only accepts the full Alibaba email form.
-func (c *CCConnectClient) SendNotification(ctx context.Context, userID, title, content string, metadata map[string]string) error {
+// SendNotification POSTs to cc-connect's /notify. userID is the bare DingTalk
+// staff ID. notifyUser=true delivers the platform notification; false skips
+// the platform send and only triggers the Aone-comment mirror (used by the
+// summary path so the user only sees the rendered card later).
+func (c *CCConnectClient) SendNotification(ctx context.Context, userID, title, content string, metadata map[string]string, notifyUser bool) error {
 	if !c.Enabled() {
 		return fmt.Errorf("ccconnect: client not configured")
 	}
 
-	wireUserID := userID
-	if c.UsesNotifySessionEndpoint() {
-		wireUserID = ensureAlibabaEmail(userID)
-	}
 	body, err := json.Marshal(notifyRequest{
-		Platform: "dingtalk",
-		UserID:   wireUserID,
-		Title:    title,
-		Content:  content,
-		Metadata: metadata,
+		Platform:   "dingtalk",
+		UserID:     userID,
+		Title:      title,
+		Content:    content,
+		Metadata:   metadata,
+		NotifyUser: &notifyUser,
 	})
 	if err != nil {
 		return fmt.Errorf("ccconnect: marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost"+c.notifyEndpointPath, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost/notify", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("ccconnect: create request: %w", err)
 	}
@@ -197,6 +172,48 @@ func (c *CCConnectClient) SendNotification(ctx context.Context, userID, title, c
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("ccconnect: notify failed: status %d body=%s", resp.StatusCode, string(raw))
+	}
+	return nil
+}
+
+// SendSessionPrompt POSTs a pre-rendered prompt to cc-connect's
+// /notify-session. cc-connect treats it as if the user typed it into their
+// 1:1 chat. userID may be bare (we expand to <id>@alibaba-inc.com on the
+// wire because /notify-session rejects bare IDs).
+//
+// Implements notifysummary.SessionPromptSender.
+func (c *CCConnectClient) SendSessionPrompt(ctx context.Context, userID, prompt string) error {
+	if !c.Enabled() {
+		return fmt.Errorf("ccconnect: client not configured")
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return fmt.Errorf("ccconnect: prompt is required")
+	}
+
+	body, err := json.Marshal(notifySessionRequest{
+		Platform: "dingtalk",
+		UserID:   ensureAlibabaEmail(userID),
+		Prompt:   prompt,
+	})
+	if err != nil {
+		return fmt.Errorf("ccconnect: marshal session-prompt request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost/notify-session", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("ccconnect: create session-prompt request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("ccconnect: session-prompt request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("ccconnect: notify-session failed: status %d body=%s", resp.StatusCode, string(raw))
 	}
 	return nil
 }

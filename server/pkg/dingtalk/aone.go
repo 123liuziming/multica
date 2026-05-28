@@ -283,7 +283,7 @@ func inboxMetadata(item db.InboxItem) map[string]string {
 
 func sendExternalUserNotification(ctx context.Context, client *Client, ccClient *CCConnectClient, userID, title, markdown string, meta map[string]string, inboxType string) {
 	if ccClient.Enabled() {
-		if err := ccClient.SendNotification(ctx, userID, title, markdown, meta); err == nil {
+		if err := ccClient.SendNotification(ctx, userID, title, markdown, meta, true); err == nil {
 			return
 		} else {
 			slog.Warn("dingtalk: push aone assignee via cc-connect failed, falling back to direct", "ding_user_id", userID, "inbox_type", inboxType, "error", err)
