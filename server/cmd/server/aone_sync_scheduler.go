@@ -9,7 +9,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-const aoneSyncInterval = 10 * time.Minute
+const aoneSyncInterval = 1 * time.Minute
 
 func runAoneSyncScheduler(ctx context.Context, queries *db.Queries, txStarter service.TxStarter) {
 	svc := service.NewAoneSyncService(queries, txStarter)
