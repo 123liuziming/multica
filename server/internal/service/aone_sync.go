@@ -100,6 +100,17 @@ func (s *AoneSyncService) SyncWorkspace(ctx context.Context, ws db.Workspace) Ao
 
 	slog.Info("aone sync: starting", "workspace_id", wsID, "aone_project_id", projectID, "min_created_ts", minCreatedTs)
 
+	membersWithUser, err := s.Queries.ListMembersWithUser(ctx, ws.ID)
+	if err != nil {
+		slog.Warn("aone sync: failed to load members with user", "workspace_id", wsID, "error", err)
+	}
+	nicknameToUserID := make(map[string]pgtype.UUID)
+	for _, m := range membersWithUser {
+		if m.UserNickname.Valid && m.UserNickname.String != "" {
+			nicknameToUserID[m.UserNickname.String] = m.UserID
+		}
+	}
+
 	items, err := fetchAoneWorkItems(ctx, projectID)
 	if err != nil {
 		result.Error = fmt.Sprintf("failed to fetch aone work items: %v", err)
@@ -123,6 +134,11 @@ func (s *AoneSyncService) SyncWorkspace(ctx context.Context, ws db.Workspace) Ao
 			continue
 		}
 
+		if !strings.Contains(item.Title, "[HARNESS-AUTO]") {
+			result.Skipped++
+			continue
+		}
+
 		dedupUUID := deriveDedupUUID(ws.ID, aoneID)
 
 		_, err := s.Queries.GetIssueByOrigin(ctx, db.GetIssueByOriginParams{
@@ -136,13 +152,27 @@ func (s *AoneSyncService) SyncWorkspace(ctx context.Context, ws db.Workspace) Ao
 			continue
 		}
 
-		if desc, err := fetchAoneWorkItemDescription(ctx, aoneID); err != nil {
-			slog.Warn("aone sync: failed to fetch description, using fallback", "workspace_id", wsID, "aone_id", aoneID, "error", err)
-		} else if desc != "" {
-			item.Body = desc
+		var aoneAssignee string
+		if detail, err := fetchAoneWorkItemDetail(ctx, aoneID); err != nil {
+			slog.Warn("aone sync: failed to fetch detail, using fallback", "workspace_id", wsID, "aone_id", aoneID, "error", err)
+		} else {
+			if detail.Description != "" {
+				item.Body = detail.Description
+			}
+			aoneAssignee = detail.Assignee
 		}
 
-		if err := s.createIssueFromAone(ctx, ws, item, dedupUUID, creatorID); err != nil {
+		issueCreatorID := creatorID
+		if aoneAssignee != "" {
+			if uid, ok := nicknameToUserID[aoneAssignee]; ok {
+				issueCreatorID = uid
+				slog.Debug("aone sync: matched creator by nickname", "workspace_id", wsID, "aone_id", aoneID, "nickname", aoneAssignee)
+			} else {
+				slog.Debug("aone sync: assignee nickname not found in workspace", "workspace_id", wsID, "aone_id", aoneID, "nickname", aoneAssignee)
+			}
+		}
+
+		if err := s.createIssueFromAone(ctx, ws, item, dedupUUID, issueCreatorID); err != nil {
 			result.Failed++
 			detail := fmt.Sprintf("aone_id=%s: %v", aoneID, err)
 			result.FailedDetails = append(result.FailedDetails, detail)
@@ -186,7 +216,7 @@ func (s *AoneSyncService) createIssueFromAone(ctx context.Context, ws db.Workspa
 		description = fmt.Sprintf("[Aone %s #%s]", item.Category, item.ID.String())
 	}
 
-	_, err = qtx.CreateIssueWithOrigin(ctx, db.CreateIssueWithOriginParams{
+	issue, err := qtx.CreateIssueWithOrigin(ctx, db.CreateIssueWithOriginParams{
 		WorkspaceID:  ws.ID,
 		Title:        title,
 		Description:  pgtype.Text{String: description, Valid: true},
@@ -202,6 +232,13 @@ func (s *AoneSyncService) createIssueFromAone(ctx context.Context, ws db.Workspa
 	if err != nil {
 		return fmt.Errorf("create issue: %w", err)
 	}
+
+	_ = qtx.AddIssueSubscriber(ctx, db.AddIssueSubscriberParams{
+		IssueID:  issue.ID,
+		UserType: "member",
+		UserID:   creatorID,
+		Reason:   "creator",
+	})
 
 	return tx.Commit(ctx)
 }
@@ -268,22 +305,43 @@ func fetchAoneWorkItems(ctx context.Context, projectID string) ([]aoneWorkItem, 
 	return items, nil
 }
 
-func fetchAoneWorkItemDescription(ctx context.Context, itemID string) (string, error) {
+type aoneWorkItemDetail struct {
+	Description string
+	Assignee    string
+}
+
+func fetchAoneWorkItemDetail(ctx context.Context, itemID string) (aoneWorkItemDetail, error) {
 	cmd := exec.CommandContext(ctx, "a1", "project", "workitem", "get", itemID, "--format", "json")
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("a1 exited %d: %s", exitErr.ExitCode(), string(exitErr.Stderr))
+			return aoneWorkItemDetail{}, fmt.Errorf("a1 exited %d: %s", exitErr.ExitCode(), string(exitErr.Stderr))
 		}
-		return "", err
+		return aoneWorkItemDetail{}, err
 	}
-	var detail struct {
+
+	var raw struct {
 		Description string `json:"description"`
+		Fields      []struct {
+			Identifier string `json:"identifier"`
+			Label      string `json:"label"`
+			Value      string `json:"value"`
+		} `json:"fields"`
 	}
-	if err := json.Unmarshal(out, &detail); err != nil {
-		return "", fmt.Errorf("parse detail: %w", err)
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return aoneWorkItemDetail{}, fmt.Errorf("parse detail: %w", err)
 	}
-	return detail.Description, nil
+
+	detail := aoneWorkItemDetail{Description: raw.Description}
+	for _, f := range raw.Fields {
+		identifier := strings.ToLower(strings.TrimSpace(f.Identifier))
+		label := strings.TrimSpace(f.Label)
+		if identifier == "assignedto" || strings.Contains(label, "指派给") {
+			detail.Assignee = strings.TrimSpace(f.Value)
+			break
+		}
+	}
+	return detail, nil
 }
 
 func mapAoneStatus(s string) string {

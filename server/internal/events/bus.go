@@ -3,6 +3,7 @@ package events
 import (
 	"log/slog"
 	"sync"
+	"time"
 )
 
 // Event represents a domain event published by handlers or services.
@@ -59,30 +60,43 @@ func (b *Bus) SubscribeAll(h Handler) {
 // Each handler is called synchronously. Panics in individual handlers are
 // recovered so one failing handler does not prevent others from executing.
 func (b *Bus) Publish(e Event) {
+	start := time.Now()
 	b.mu.RLock()
 	handlers := b.listeners[e.Type]
 	globals := b.globalHandlers
 	b.mu.RUnlock()
 
-	for _, h := range handlers {
+	for i, h := range handlers {
 		func() {
+			t0 := time.Now()
 			defer func() {
 				if r := recover(); r != nil {
 					slog.Error("panic in event listener", "event_type", e.Type, "recovered", r)
+				}
+				if d := time.Since(t0); d > 50*time.Millisecond {
+					slog.Warn("slow event handler", "event_type", e.Type, "handler_index", i, "duration_ms", d.Milliseconds())
 				}
 			}()
 			h(e)
 		}()
 	}
 
-	for _, h := range globals {
+	for i, h := range globals {
 		func() {
+			t0 := time.Now()
 			defer func() {
 				if r := recover(); r != nil {
 					slog.Error("panic in global event listener", "event_type", e.Type, "recovered", r)
 				}
+				if d := time.Since(t0); d > 50*time.Millisecond {
+					slog.Warn("slow global event handler", "event_type", e.Type, "handler_index", i, "duration_ms", d.Milliseconds())
+				}
 			}()
 			h(e)
 		}()
+	}
+
+	if d := time.Since(start); d > 100*time.Millisecond {
+		slog.Warn("slow event publish", "event_type", e.Type, "total_duration_ms", d.Milliseconds(), "handler_count", len(handlers)+len(globals))
 	}
 }

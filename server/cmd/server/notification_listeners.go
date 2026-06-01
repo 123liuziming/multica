@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -298,8 +299,13 @@ func notifyIssueSubscribers(
 	details []byte,
 ) map[string]bool {
 	notified := map[string]bool{}
+	handlerStart := time.Now()
 
+	t0 := time.Now()
 	subs, err := queries.ListIssueSubscribers(ctx, parseUUID(subscriberIssueID))
+	if d := time.Since(t0); d > 20*time.Millisecond {
+		slog.Warn("notif: slow ListIssueSubscribers", "issue_id", subscriberIssueID, "duration_ms", d.Milliseconds())
+	}
 	if err != nil {
 		slog.Error("failed to list subscribers for notification",
 			"issue_id", subscriberIssueID, "error", err)
@@ -313,7 +319,11 @@ func notifyIssueSubscribers(
 			memberIDs = append(memberIDs, util.UUIDToString(sub.UserID))
 		}
 	}
+	t1 := time.Now()
 	userPrefs := loadUserPrefs(ctx, queries, workspaceID, memberIDs)
+	if d := time.Since(t1); d > 20*time.Millisecond {
+		slog.Warn("notif: slow loadUserPrefs", "issue_id", subscriberIssueID, "duration_ms", d.Milliseconds(), "user_count", len(memberIDs))
+	}
 
 	for _, sub := range subs {
 		// Only notify member-type subscribers (not agents)
@@ -370,6 +380,9 @@ func notifyIssueSubscribers(
 		dingtalk.PushInbox(ctx, dingClient, ccConnectClient, summaryDispatcher, queries, item)
 	}
 
+	if d := time.Since(handlerStart); d > 50*time.Millisecond {
+		slog.Warn("notif: slow notifyIssueSubscribers total", "issue_id", subscriberIssueID, "notif_type", notifType, "duration_ms", d.Milliseconds(), "sub_count", len(subs))
+	}
 	return notified
 }
 
@@ -391,6 +404,7 @@ func notifyDirect(
 	body string,
 	details []byte,
 ) {
+	start := time.Now()
 	// Skip if recipient is the actor
 	if recipientID == e.ActorID {
 		return
@@ -433,6 +447,9 @@ func notifyDirect(
 		Payload:     map[string]any{"item": resp},
 	})
 	dingtalk.PushInbox(ctx, dingClient, ccConnectClient, summaryDispatcher, queries, item)
+	if d := time.Since(start); d > 50*time.Millisecond {
+		slog.Warn("notif: slow notifyDirect", "recipient_id", recipientID, "notif_type", notifType, "duration_ms", d.Milliseconds())
+	}
 }
 
 // notifyMentionedMembers creates inbox items for each @mentioned member,

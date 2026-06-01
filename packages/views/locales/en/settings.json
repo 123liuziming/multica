@@ -34,6 +34,8 @@
     "section_profile": "Profile",
     "click_avatar_hint": "Click to upload avatar",
     "name_label": "Name",
+    "nickname_label": "Nickname",
+    "nickname_placeholder": "e.g. your internal alias",
     "save": "Update Profile",
     "saving": "Updating...",
     "toast_avatar_updated": "Avatar updated",

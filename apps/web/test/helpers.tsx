@@ -9,6 +9,7 @@ export const mockUser: User = {
   name: "Test User",
   email: "test@multica.ai",
   avatar_url: null,
+  nickname: null,
   onboarded_at: "2026-01-01T00:00:00Z",
   onboarding_questionnaire: {},
   // Matches real server behavior for anyone who onboarded before this
@@ -44,6 +45,7 @@ export const mockMembers: MemberWithUser[] = [
     name: "Test User",
     email: "test@multica.ai",
     avatar_url: null,
+    nickname: null,
   },
 ];
 

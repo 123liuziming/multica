@@ -91,6 +91,7 @@ export interface UpdateMeRequest {
   name?: string;
   avatar_url?: string;
   language?: string;
+  nickname?: string;
 }
 
 export interface CreateMemberRequest {

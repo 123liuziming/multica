@@ -16,6 +16,7 @@ UPDATE "user" SET
     name = COALESCE($2, name),
     avatar_url = COALESCE($3, avatar_url),
     language = COALESCE($4, language),
+    nickname = COALESCE($5, nickname),
     updated_at = now()
 WHERE id = $1
 RETURNING *;
@@ -56,3 +57,9 @@ UPDATE "user" SET
     updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- name: GetUserByNicknameInWorkspace :one
+SELECT u.* FROM "user" u
+JOIN member m ON m.user_id = u.id
+WHERE u.nickname = $1 AND m.workspace_id = $2
+LIMIT 1;

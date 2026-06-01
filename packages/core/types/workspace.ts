@@ -30,6 +30,7 @@ export interface User {
   name: string;
   email: string;
   avatar_url: string | null;
+  nickname: string | null;
   onboarded_at: string | null;
   /**
    * JSONB payload from the server. Typed as `unknown` here so this module
@@ -64,6 +65,7 @@ export interface MemberWithUser {
   name: string;
   email: string;
   avatar_url: string | null;
+  nickname: string | null;
 }
 
 export interface Invitation {

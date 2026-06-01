@@ -65,7 +65,7 @@ func NewAPIClient(baseURL, workspaceID, token string) *APIClient {
 		BaseURL:     strings.TrimRight(baseURL, "/"),
 		WorkspaceID: workspaceID,
 		Token:       token,
-		HTTPClient:  &http.Client{Timeout: 15 * time.Second},
+		HTTPClient:  &http.Client{Timeout: 60 * time.Second},
 	}
 }
 

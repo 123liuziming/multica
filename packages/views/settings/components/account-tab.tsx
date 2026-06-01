@@ -18,12 +18,14 @@ export function AccountTab() {
   const setUser = useAuthStore((s) => s.setUser);
 
   const [profileName, setProfileName] = useState(user?.name ?? "");
+  const [profileNickname, setProfileNickname] = useState(user?.nickname ?? "");
   const [profileSaving, setProfileSaving] = useState(false);
   const { upload, uploading } = useFileUpload(api);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setProfileName(user?.name ?? "");
+    setProfileNickname(user?.nickname ?? "");
   }, [user]);
 
   const initials = (user?.name ?? "")
@@ -52,7 +54,7 @@ export function AccountTab() {
   const handleProfileSave = async () => {
     setProfileSaving(true);
     try {
-      const updated = await api.updateMe({ name: profileName });
+      const updated = await api.updateMe({ name: profileName, nickname: profileNickname || undefined });
       setUser(updated);
       toast.success(t(($) => $.account.toast_profile_updated));
     } catch (e) {
@@ -114,6 +116,16 @@ export function AccountTab() {
                 type="search"
                 value={profileName}
                 onChange={(e) => setProfileName(e.target.value)}
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">{t(($) => $.account.nickname_label)}</Label>
+              <Input
+                type="text"
+                value={profileNickname}
+                onChange={(e) => setProfileNickname(e.target.value)}
+                placeholder={t(($) => $.account.nickname_placeholder)}
                 className="mt-1"
               />
             </div>

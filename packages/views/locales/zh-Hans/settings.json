@@ -34,6 +34,8 @@
     "section_profile": "个人资料",
     "click_avatar_hint": "点击上传头像",
     "name_label": "姓名",
+    "nickname_label": "花名",
+    "nickname_placeholder": "例如：内部花名",
     "save": "更新资料",
     "saving": "更新中...",
     "toast_avatar_updated": "头像已更新",

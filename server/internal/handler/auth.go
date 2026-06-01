@@ -52,6 +52,7 @@ type UserResponse struct {
 	Name                    string          `json:"name"`
 	Email                   string          `json:"email"`
 	AvatarURL               *string         `json:"avatar_url"`
+	Nickname                *string         `json:"nickname"`
 	Language                *string         `json:"language"`
 	OnboardedAt             *string         `json:"onboarded_at"`
 	OnboardingQuestionnaire json.RawMessage `json:"onboarding_questionnaire"`
@@ -73,6 +74,7 @@ func userToResponse(u db.User) UserResponse {
 		Name:                    u.Name,
 		Email:                   u.Email,
 		AvatarURL:               textToPtr(u.AvatarUrl),
+		Nickname:                textToPtr(u.Nickname),
 		Language:                textToPtr(u.Language),
 		OnboardedAt:             timestampToPtr(u.OnboardedAt),
 		OnboardingQuestionnaire: json.RawMessage(q),
@@ -424,6 +426,7 @@ type UpdateMeRequest struct {
 	Name      *string `json:"name"`
 	AvatarURL *string `json:"avatar_url"`
 	Language  *string `json:"language"`
+	Nickname  *string `json:"nickname"`
 }
 
 type GoogleLoginRequest struct {
@@ -667,6 +670,9 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		params.Language = pgtype.Text{String: lang, Valid: true}
+	}
+	if req.Nickname != nil {
+		params.Nickname = pgtype.Text{String: strings.TrimSpace(*req.Nickname), Valid: true}
 	}
 
 	updatedUser, err := h.Queries.UpdateUser(r.Context(), params)

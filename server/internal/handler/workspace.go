@@ -354,6 +354,7 @@ type MemberWithUserResponse struct {
 	Name        string  `json:"name"`
 	Email       string  `json:"email"`
 	AvatarURL   *string `json:"avatar_url"`
+	Nickname    *string `json:"nickname"`
 }
 
 func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
@@ -380,6 +381,7 @@ func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
 			Name:        m.UserName,
 			Email:       m.UserEmail,
 			AvatarURL:   textToPtr(m.UserAvatarUrl),
+			Nickname:    textToPtr(m.UserNickname),
 		}
 	}
 
@@ -401,6 +403,7 @@ func memberWithUserResponse(member db.Member, user db.User) MemberWithUserRespon
 		Name:        user.Name,
 		Email:       user.Email,
 		AvatarURL:   textToPtr(user.AvatarUrl),
+		Nickname:    textToPtr(user.Nickname),
 	}
 }
 
