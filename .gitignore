@@ -59,3 +59,8 @@ server/server
 data/
 .kilo
 .idea
+.deploy-backups/
+.last_backend_image_for_pr_feature
+.last_backend_rollback_image
+.last_deploy_backup
+docker-compose.multica2.yml.bak*
