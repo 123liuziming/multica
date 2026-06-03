@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -145,14 +146,35 @@ func (c *CCConnectClient) SendNotification(ctx context.Context, userID, title, c
 		return fmt.Errorf("ccconnect: client not configured")
 	}
 
-	body, err := json.Marshal(notifyRequest{
+	nr := notifyRequest{
 		Platform:   "dingtalk",
 		UserID:     userID,
 		Title:      title,
 		Content:    content,
 		Metadata:   metadata,
 		NotifyUser: &notifyUser,
-	})
+	}
+	logAttrs := []any{
+		"user_id", nr.UserID,
+		"title", nr.Title,
+		"content", nr.Content,
+		"metadata", nr.Metadata,
+		"notify_user", notifyUser,
+	}
+	if nr.Metadata != nil {
+		if v := nr.Metadata["issue_id"]; v != "" {
+			logAttrs = append(logAttrs, "issue_id", v)
+		}
+		if v := nr.Metadata["issue_title"]; v != "" {
+			logAttrs = append(logAttrs, "issue_title", v)
+		}
+		if v := nr.Metadata["issue_identifier"]; v != "" {
+			logAttrs = append(logAttrs, "issue_identifier", v)
+		}
+	}
+	slog.InfoContext(ctx, "ccconnect: POST /notify", logAttrs...)
+
+	body, err := json.Marshal(nr)
 	if err != nil {
 		return fmt.Errorf("ccconnect: marshal request: %w", err)
 	}
@@ -190,11 +212,17 @@ func (c *CCConnectClient) SendSessionPrompt(ctx context.Context, userID, prompt 
 		return fmt.Errorf("ccconnect: prompt is required")
 	}
 
-	body, err := json.Marshal(notifySessionRequest{
+	nsr := notifySessionRequest{
 		Platform: "dingtalk",
 		UserID:   ensureAlibabaEmail(userID),
 		Prompt:   prompt,
-	})
+	}
+	slog.InfoContext(ctx, "ccconnect: POST /notify-session",
+		"user_id", nsr.UserID,
+		"prompt", nsr.Prompt,
+	)
+
+	body, err := json.Marshal(nsr)
 	if err != nil {
 		return fmt.Errorf("ccconnect: marshal session-prompt request: %w", err)
 	}
@@ -243,6 +271,21 @@ func (c *CCConnectClient) SendQuestionCard(ctx context.Context, reqBody Question
 		return fmt.Errorf("ccconnect: question card requires card_data.question")
 	}
 
+	slog.InfoContext(ctx, "ccconnect: POST /cards/question",
+		"user_id", reqBody.UserID,
+		"session_key", reqBody.SessionKey,
+		"workspace_id", reqBody.CardData.WorkspaceID,
+		"issue_id", reqBody.CardData.IssueID,
+		"issue_title", reqBody.CardData.IssueTitle,
+		"issue_identifier", reqBody.CardData.IssueIdentifier,
+		"question_id", reqBody.CardData.QuestionID,
+		"question", reqBody.CardData.Question,
+		"agent_id", reqBody.CardData.AgentID,
+		"agent_name", reqBody.CardData.AgentName,
+		"multi_select", reqBody.CardData.MultiSelect,
+		"options_count", len(reqBody.CardData.Options),
+	)
+
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return fmt.Errorf("ccconnect: marshal question card request: %w", err)
@@ -274,11 +317,30 @@ func (c *CCConnectClient) SendSessionMessage(ctx context.Context, sessionKey, me
 		return fmt.Errorf("ccconnect: client not configured")
 	}
 
-	body, err := json.Marshal(sendRequest{
+	sr := sendRequest{
 		SessionKey: sessionKey,
 		Message:    message,
 		Metadata:   metadata,
-	})
+	}
+	logAttrs := []any{
+		"session_key", sr.SessionKey,
+		"message", sr.Message,
+		"metadata", sr.Metadata,
+	}
+	if sr.Metadata != nil {
+		if v := sr.Metadata["issue_id"]; v != "" {
+			logAttrs = append(logAttrs, "issue_id", v)
+		}
+		if v := sr.Metadata["issue_title"]; v != "" {
+			logAttrs = append(logAttrs, "issue_title", v)
+		}
+		if v := sr.Metadata["issue_identifier"]; v != "" {
+			logAttrs = append(logAttrs, "issue_identifier", v)
+		}
+	}
+	slog.InfoContext(ctx, "ccconnect: POST /send", logAttrs...)
+
+	body, err := json.Marshal(sr)
 	if err != nil {
 		return fmt.Errorf("ccconnect: marshal send request: %w", err)
 	}
